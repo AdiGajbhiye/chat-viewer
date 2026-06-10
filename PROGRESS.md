@@ -27,7 +27,7 @@ file, check `git log`, then implement the **first milestone below that is not
 | # | Milestone | Status | Acceptance criteria |
 |---|---|---|---|
 | M1 | Import + data layer | done | Importer parses the real export from a zip or folder: 1,594 conversations / 12,185 messages, turn pairing per DESIGN.md §2, drift schema per §4, assets copied + renamed. Tests cover: counts match, all 4 content types handled, forks produce multiple child turns, asset resolution, idempotent re-import. |
-| M2 | Conversation list + bare read mode | todo | App launches on macOS. Sidebar lists imported conversations (sorted by update_time). Selecting one opens a minimal read mode: full prompt+response markdown, ↑/↓ walks the active path. Import triggered from UI with progress. |
+| M2 | Conversation list + bare read mode | done | App launches on macOS. Sidebar lists imported conversations (sorted by update_time). Selecting one opens a minimal read mode: full prompt+response markdown, ↑/↓ walks the active path. Import triggered from UI with progress. |
 | M3 | Navigate mode (canvas) | todo | Grid/lane layout per DESIGN.md §6: uniform collapsed cards (query + meta), quick-button strip, edges with active-path emphasis, pan/zoom, viewport culling, arrow-key/button selection, minimap. |
 | M4 | Read mode integration | todo | Maximize/tap → read mode (full-screen Android, overlay macOS), hero transition, ↑↓←→ traversal with branch breadcrumb, minimize returns centered, mode/focus/viewport persisted per conversation (canvas_state). |
 | M5 | Polish | todo | FTS search over prompts/responses, image/PDF assets render, macOS menu + shortcuts, Android back behavior, import warnings UI, app icon optional. |
@@ -37,6 +37,31 @@ Statuses: `todo` → `in_progress` → `done` (or `blocked`).
 ## Log
 
 <!-- newest first: date · milestone · what was done / decisions / blockers -->
+- 2026-06-10 · M2 · Done. Two-pane home (sidebar 320px + detail), conversation
+  list sorted by update_time desc (drift stream query, live during import),
+  bare read mode (prompt/response via gpt_markdown, collapsible Reasoning
+  tile, ↑/↓ buttons + arrow keys walk the active path, "n / m" position
+  indicator), import zip/folder from a sidebar menu (file_picker) running in
+  a background isolate (drift computeWithDatabase) with a progress banner.
+  `flutter analyze` clean, 43 tests pass, `flutter build macos --debug`
+  succeeds. Decisions:
+  - Active path = ancestors of `current_turn_id` extended down to a leaf,
+    picking the most recently created sibling at each fork (matches ChatGPT
+    showing the latest edit/regeneration); guards for dangling parents and
+    cycles in corrupt data. Lives in `lib/src/domain/active_path.dart`.
+  - Read mode replaces the detail pane (no overlay/hero yet — that is M4);
+    image markers in markdown render as a textual "[image attachment]"
+    placeholder so `asset://` URIs never hit the network (assets render
+    in M5).
+  - macOS entitlements gained `files.user-selected.read-only` for the open
+    panel (DESIGN.md §7).
+  - Why previous sessions saw `flutter test` hang forever: widget tests did
+    real file I/O + import inside testWidgets' FakeAsync zone (deadlock —
+    fixed with `tester.runAsync`), and drift's stream-close schedules a
+    zero-duration timer when ProviderScope is disposed, which deadlocked
+    `db.close()` in tearDown. Each widget test now unmounts the app and
+    pumps 1ms so that timer fires inside the test. Keep both patterns for
+    M3/M4 widget tests, and never run `flutter test` without a timeout.
 - 2026-06-10 · M1 · Done. Importer (folder + zip), turn pairing, drift schema,
   31 tests passing incl. goldens vs the real export (1,594 convs / 12,185
   msgs / 6,075 turns / 258 fork parents / 45 assets copied, 3 missing →
