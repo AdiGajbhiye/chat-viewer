@@ -29,7 +29,7 @@ file, check `git log`, then implement the **first milestone below that is not
 | M1 | Import + data layer | done | Importer parses the real export from a zip or folder: 1,594 conversations / 12,185 messages, turn pairing per DESIGN.md §2, drift schema per §4, assets copied + renamed. Tests cover: counts match, all 4 content types handled, forks produce multiple child turns, asset resolution, idempotent re-import. |
 | M2 | Conversation list + bare read mode | done | App launches on macOS. Sidebar lists imported conversations (sorted by update_time). Selecting one opens a minimal read mode: full prompt+response markdown, ↑/↓ walks the active path. Import triggered from UI with progress. |
 | M3 | Navigate mode (canvas) | done | Grid/lane layout per DESIGN.md §6: uniform collapsed cards (query + meta), quick-button strip, edges with active-path emphasis, pan/zoom, viewport culling, arrow-key/button selection, minimap. |
-| M4 | Read mode integration | todo | Maximize/tap → read mode (full-screen Android, overlay macOS), hero transition, ↑↓←→ traversal with branch breadcrumb, minimize returns centered, mode/focus/viewport persisted per conversation (canvas_state). |
+| M4 | Read mode integration | done | Maximize/tap → read mode (full-screen Android, overlay macOS), hero transition, ↑↓←→ traversal with branch breadcrumb, minimize returns centered, mode/focus/viewport persisted per conversation (canvas_state). |
 | M5 | Polish | todo | FTS search over prompts/responses, image/PDF assets render, macOS menu + shortcuts, Android back behavior, import warnings UI, app icon optional. |
 
 Statuses: `todo` → `in_progress` → `done` (or `blocked`).
@@ -37,6 +37,48 @@ Statuses: `todo` → `in_progress` → `done` (or `blocked`).
 ## Log
 
 <!-- newest first: date · milestone · what was done / decisions / blockers -->
+- 2026-06-11 · M4 · Done. Read mode integrated with the canvas. Card tap or
+  ⊕ pushes a `ReadModeRoute` (custom `PopupRoute`) that grows hero-style
+  from the cell's on-screen rect — full-screen on Android
+  (`defaultTargetPlatform`), centered ~85% overlay over the dimmed canvas
+  elsewhere; the canvas keeps its viewport underneath. `ReadOverlay`
+  (rewritten `read_view.dart`, reusing M2's turn body + markdown rendering)
+  traverses via the grid-layout neighbors: ↑/↓ transcript along the lane,
+  ←/→ across branches at the same depth with a "⑂ Branch i of n" breadcrumb
+  (cells sharing the focused row, left→right by lane). Esc / ⊖ / barrier tap
+  pops; the canvas then re-centers on the node just read and persists
+  mode='navigate'. `canvas_state` is now live: focused_turn_id + mode +
+  viewport (scale & canvas-space center as JSON, robust to window-size
+  changes) upserted on focus/mode changes, debounced 300 ms for pan/zoom
+  with a dispose-time flush, restored on open (including auto-reopening
+  read mode where the user left off; importer's keep-while-focus-exists
+  policy was already in place since M1). `flutter analyze` clean, 57 tests
+  pass (52 kept — one updated: maximize is now enabled — + 5 new M4 widget
+  tests), `flutter build macos --debug` succeeds. Decisions:
+  - Card body tap = maximize (DESIGN.md §6 "Tap a node … → read mode");
+    NodeCard's now-dead `onSelect` was removed — selection moves only via
+    arrows/quick-buttons, or implicitly by entering read mode.
+  - `conversationPathProvider`/`ConversationPath` (M2) deleted; the overlay
+    reads the same `conversationGraphProvider` as the canvas, so read-mode
+    ↑/↓ follows the *layout's* lane semantics (active-path rule at forks).
+  - Persisted state is best-effort: writes are fire-and-forget with errors
+    swallowed, and a corrupt/missing viewport_json falls back to the M3
+    default (1:1 centered on the focused turn).
+  - canvasStateProvider is a one-shot FutureProvider (not a stream) so the
+    canvas's own writes can't feed back into rebuilds.
+  - Read-mode focus changes are mirrored into the canvas selection via a
+    callback while the route is up, so pop centering needs no result value.
+  - The reverse (minimize) transition shrinks toward the *originally*
+    tapped cell even if focus moved while reading — visually fine at 220 ms
+    since the canvas immediately re-centers; revisit only if it grates.
+  - Android swipe-up/down-to-advance from DESIGN.md §6 is left to M5
+    (Android input polish) — it isn't in M4's acceptance criteria.
+  - Widget-test gotchas for M5: `defaultTargetPlatform` in widget tests is
+    *android* — tests asserting desktop presentation must set
+    `debugDefaultTargetPlatformOverride = TargetPlatform.macOS` and reset
+    it inline (try/finally), because the binding verifies foundation vars
+    *before* tearDown callbacks run. The 300 ms persistence debounce is
+    deliberately below the canvas tests' standard ≥350 ms post-tap pump.
 - 2026-06-10 · M3 · Done. Navigate-mode canvas replaces the detail pane.
   Grid layout engine (`lib/src/domain/grid_layout.dart`): pure function of
   the turn tree — active path (reused from `active_path.dart`) in lane 0,
