@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../data/import/chatgpt_importer.dart';
@@ -54,7 +55,8 @@ class ImportController extends Notifier<ImportState> {
         onProgress: (p) => state = ImportRunning(p.done, p.total),
       );
       state = ImportSucceeded(result);
-    } catch (e) {
+    } catch (e, st) {
+      debugPrint('Import failed for $path: $e\n$st');
       state = ImportFailed(e.toString());
     }
   }

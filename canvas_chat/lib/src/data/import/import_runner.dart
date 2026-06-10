@@ -29,22 +29,38 @@ Future<ImportResult> runImportInBackground({
   try {
     return await db.computeWithDatabase(
       connect: AppDatabase.new,
-      computation: (db) async {
-        final source = await ExportSource.open(exportPath);
-        try {
-          return await ChatGptImporter(
-            db: db,
-            source: source,
-            assetsDir: Directory(assetsDirPath),
-            sourcePath: exportPath,
-            onProgress: (p) => progressSend.send([p.done, p.total]),
-          ).run();
-        } finally {
-          await source.close();
-        }
-      },
+      computation: _importComputation(exportPath, assetsDirPath, progressSend),
     );
   } finally {
     progressPort.close();
   }
+}
+
+/// Builds the isolate-side computation in a scope whose captures are only
+/// sendable values (two strings and a [SendPort]).
+///
+/// Must not be inlined into [runImportInBackground]: the Dart VM gives all
+/// captured variables of a scope one shared closure context, so an inline
+/// closure drags the caller's `onProgress` (which captures UI objects, e.g.
+/// the Riverpod controller) into the isolate spawn message and the spawn
+/// fails with "Illegal argument in isolate message: object is unsendable".
+Future<ImportResult> Function(AppDatabase) _importComputation(
+  String exportPath,
+  String assetsDirPath,
+  SendPort progress,
+) {
+  return (db) async {
+    final source = await ExportSource.open(exportPath);
+    try {
+      return await ChatGptImporter(
+        db: db,
+        source: source,
+        assetsDir: Directory(assetsDirPath),
+        sourcePath: exportPath,
+        onProgress: (p) => progress.send([p.done, p.total]),
+      ).run();
+    } finally {
+      await source.close();
+    }
+  };
 }

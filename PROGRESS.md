@@ -37,6 +37,16 @@ Statuses: `todo` → `in_progress` → `done` (or `blocked`).
 ## Log
 
 <!-- newest first: date · milestone · what was done / decisions / blockers -->
+- 2026-06-11 · post-M5 fix · Import failed in the real app (worked in all
+  tests): drift's `computeWithDatabase` closure was inlined in
+  `runImportInBackground`, and the Dart VM's shared per-scope closure context
+  dragged the caller's `onProgress` (capturing the Riverpod controller) into
+  the isolate spawn message → "Illegal argument in isolate message: object is
+  unsendable - _Future". Fixed by building the computation in a top-level
+  function whose only captures are two strings and a SendPort. Regression
+  test added (onProgress capturing an unsendable, fails on old code); import
+  failures now also debugPrint with stack. Verified end-to-end in the running
+  macOS app via UI automation: 1,594 conversations imported.
 - 2026-06-11 · M5 · Done — all milestones complete. Sidebar search: an FTS5
   query over `turns_fts` (prompt/response) grouped to conversations by best
   rank, unioned with case-insensitive title matching (title hits first,

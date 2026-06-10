@@ -63,6 +63,33 @@ void main() {
     await subscription.cancel();
   });
 
+  test('spawns even when onProgress captures unsendable UI objects', () async {
+    // Regression: the app's onProgress closes over a Riverpod controller.
+    // The Dart VM shares one closure context per scope, so an inline
+    // computation closure in runImportInBackground used to drag onProgress
+    // (and its unsendable captures) into the isolate spawn message:
+    // "Illegal argument in isolate message: object is unsendable - _Future".
+    final exportDir = Directory('${tempDir.path}/export_unsendable');
+    await writeSyntheticExport(exportDir);
+    final assetsDir = Directory('${tempDir.path}/assets_unsendable')
+      ..createSync(recursive: true);
+
+    final unsendable = Future<void>.value(); // like a controller's internals
+    final seen = <int>[];
+    final result = await runImportInBackground(
+      db: db,
+      exportPath: exportDir.path,
+      assetsDirPath: assetsDir.path,
+      onProgress: (p) {
+        unsendable; // force capture into the caller's closure context
+        seen.add(p.done);
+      },
+    );
+
+    expect(result.conversations, 3);
+    expect(seen, isNotEmpty);
+  });
+
   test('surfaces failures from the isolate', () async {
     final bogus = Directory('${tempDir.path}/not_an_export')
       ..createSync(recursive: true);
