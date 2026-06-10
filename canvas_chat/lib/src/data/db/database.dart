@@ -1,0 +1,157 @@
+import 'package:drift/drift.dart';
+
+part 'database.g.dart';
+
+/// `conversations` table (DESIGN.md §4).
+class Conversations extends Table {
+  /// Export conversation id.
+  TextColumn get id => text()();
+  TextColumn get title => text().withDefault(const Constant(''))();
+
+  /// Milliseconds since epoch (export floats are converted on import).
+  IntColumn get createTime => integer().nullable()();
+  IntColumn get updateTime => integer().nullable()();
+  BoolColumn get isArchived => boolean().withDefault(const Constant(false))();
+  BoolColumn get isStarred => boolean().withDefault(const Constant(false))();
+  TextColumn get defaultModelSlug => text().nullable()();
+
+  /// Derived from the export's `current_node`.
+  TextColumn get currentTurnId => text().nullable()();
+
+  /// Importer plugin id, e.g. 'chatgpt_export'.
+  TextColumn get source => text()();
+
+  @override
+  Set<Column> get primaryKey => {id};
+}
+
+/// `turns` table: one canvas node per row (DESIGN.md §4).
+class Turns extends Table {
+  /// `<conversation_id>:<node_id>` where `node_id` is the turn's starting
+  /// message node. The conversation prefix is required because real exports
+  /// contain server-side conversation copies that reuse node ids.
+  TextColumn get id => text()();
+  TextColumn get conversationId => text().references(Conversations, #id)();
+
+  /// Tree edge; NULL = root turn.
+  TextColumn get parentTurnId => text().nullable()();
+  TextColumn get promptMd => text().withDefault(const Constant(''))();
+  TextColumn get responseMd => text().withDefault(const Constant(''))();
+
+  /// Collapsed reasoning, if any.
+  TextColumn get thoughtsMd => text().nullable()();
+  TextColumn get modelSlug => text().nullable()();
+
+  /// Milliseconds since epoch.
+  IntColumn get createTime => integer().nullable()();
+
+  /// Original message nodes, for lossless re-derivation.
+  TextColumn get rawJson => text()();
+
+  @override
+  Set<Column> get primaryKey => {id};
+}
+
+/// `turn_assets` table (DESIGN.md §4). A missing asset is recorded with an
+/// empty `path` (placeholder record, not a failure).
+class TurnAssets extends Table {
+  TextColumn get turnId => text().references(Turns, #id)();
+
+  /// 'prompt' | 'response'.
+  TextColumn get kind => text()();
+
+  /// Absolute path of the copied asset; '' when the asset was missing from
+  /// the export.
+  TextColumn get path => text()();
+  TextColumn get originalName => text().nullable()();
+  IntColumn get width => integer().nullable()();
+  IntColumn get height => integer().nullable()();
+}
+
+/// `canvas_state` table (DESIGN.md §4): the only user-mutable canvas state.
+class CanvasStates extends Table {
+  @override
+  String get tableName => 'canvas_state';
+
+  TextColumn get conversationId => text()();
+  TextColumn get viewportJson => text().nullable()();
+
+  /// 'navigate' | 'read'.
+  TextColumn get mode => text().withDefault(const Constant('navigate'))();
+  TextColumn get focusedTurnId => text().nullable()();
+
+  @override
+  Set<Column> get primaryKey => {conversationId};
+}
+
+/// `imports` table: one row per import run (DESIGN.md §4).
+class Imports extends Table {
+  IntColumn get id => integer().autoIncrement()();
+  IntColumn get startedAt => integer()();
+  IntColumn get finishedAt => integer().nullable()();
+  TextColumn get sourcePath => text()();
+  IntColumn get conversations => integer().withDefault(const Constant(0))();
+  IntColumn get turns => integer().withDefault(const Constant(0))();
+  TextColumn get warningsJson => text().withDefault(const Constant('[]'))();
+}
+
+@DriftDatabase(
+  tables: [Conversations, Turns, TurnAssets, CanvasStates, Imports],
+)
+class AppDatabase extends _$AppDatabase {
+  AppDatabase(super.e);
+
+  @override
+  int get schemaVersion => 1;
+
+  @override
+  MigrationStrategy get migration => MigrationStrategy(
+        onCreate: (m) async {
+          await m.createAll();
+          await customStatement(
+            'CREATE INDEX idx_turns_conversation ON turns (conversation_id)',
+          );
+          await customStatement(
+            'CREATE INDEX idx_turn_assets_turn ON turn_assets (turn_id)',
+          );
+          // FTS5 over prompts/responses, kept in sync by triggers so every
+          // write path (import, future editing) is covered.
+          await customStatement(
+            'CREATE VIRTUAL TABLE turns_fts USING fts5('
+            'prompt_md, response_md, content=turns, content_rowid=rowid)',
+          );
+          await customStatement(
+            'CREATE TRIGGER turns_fts_ai AFTER INSERT ON turns BEGIN '
+            'INSERT INTO turns_fts(rowid, prompt_md, response_md) '
+            'VALUES (new.rowid, new.prompt_md, new.response_md); END',
+          );
+          await customStatement(
+            'CREATE TRIGGER turns_fts_ad AFTER DELETE ON turns BEGIN '
+            "INSERT INTO turns_fts(turns_fts, rowid, prompt_md, response_md) "
+            "VALUES ('delete', old.rowid, old.prompt_md, old.response_md); "
+            'END',
+          );
+          await customStatement(
+            'CREATE TRIGGER turns_fts_au AFTER UPDATE ON turns BEGIN '
+            "INSERT INTO turns_fts(turns_fts, rowid, prompt_md, response_md) "
+            "VALUES ('delete', old.rowid, old.prompt_md, old.response_md); "
+            'INSERT INTO turns_fts(rowid, prompt_md, response_md) '
+            'VALUES (new.rowid, new.prompt_md, new.response_md); END',
+          );
+        },
+        beforeOpen: (details) async {
+          await customStatement('PRAGMA foreign_keys = ON');
+        },
+      );
+
+  /// Searches prompts/responses; returns matching turn ids, best first.
+  Future<List<String>> searchTurnIds(String query) async {
+    final rows = await customSelect(
+      'SELECT t.id AS id FROM turns_fts f '
+      'JOIN turns t ON t.rowid = f.rowid '
+      'WHERE turns_fts MATCH ? ORDER BY rank',
+      variables: [Variable.withString(query)],
+    ).get();
+    return [for (final row in rows) row.read<String>('id')];
+  }
+}
