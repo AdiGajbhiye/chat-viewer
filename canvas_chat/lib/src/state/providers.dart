@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../data/db/database.dart';
 import '../domain/active_path.dart';
+import '../domain/grid_layout.dart';
 
 /// The app database. Overridden in `main()` (and in tests) with a concrete
 /// instance — there is no sensible default.
@@ -68,6 +69,32 @@ final conversationPathProvider =
     return ConversationPath(
       conversation,
       activePath(turns, conversation.currentTurnId),
+    );
+  });
+});
+
+/// A conversation opened on the canvas: its row plus the grid layout of its
+/// full turn tree (M3 navigate mode). Layout is a pure function of the tree,
+/// recomputed whenever the turns change (DESIGN.md §6).
+class ConversationGraph {
+  ConversationGraph(this.conversation, this.layout);
+
+  final Conversation conversation;
+  final TurnGridLayout layout;
+}
+
+final conversationGraphProvider =
+    StreamProvider.autoDispose.family<ConversationGraph, String>((ref, id) {
+  final db = ref.watch(databaseProvider);
+  final turnsQuery = db.select(db.turns)
+    ..where((t) => t.conversationId.equals(id));
+  return turnsQuery.watch().asyncMap((turns) async {
+    final conversation = await (db.select(db.conversations)
+          ..where((c) => c.id.equals(id)))
+        .getSingle();
+    return ConversationGraph(
+      conversation,
+      computeGridLayout(turns, conversation.currentTurnId),
     );
   });
 });

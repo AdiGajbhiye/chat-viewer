@@ -2,12 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../state/providers.dart';
+import 'canvas/canvas_view.dart';
 import 'conversation_list_pane.dart';
-import 'read_view.dart';
 
 /// Two-pane home: conversation sidebar + detail (DESIGN.md §6
-/// "Sidebar / home"). M2 shows the bare read mode in the detail pane; the
-/// canvas takes its place in M3.
+/// "Sidebar / home"). M3 puts the navigate-mode canvas in the detail pane;
+/// read mode returns as an overlay on top of it in M4.
 class HomeScreen extends ConsumerWidget {
   const HomeScreen({super.key});
 
@@ -22,7 +22,7 @@ class HomeScreen extends ConsumerWidget {
           Expanded(
             child: selectedId == null
                 ? const Center(child: Text('Select a conversation'))
-                : ReadView(
+                : CanvasView(
                     key: ValueKey(selectedId),
                     conversationId: selectedId,
                   ),
