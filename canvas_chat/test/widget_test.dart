@@ -452,6 +452,48 @@ void main() {
       await unmountApp(tester);
     });
 
+    testWidgets('Android: swipe up/down advances the reading focus',
+        (tester) async {
+      // Widget tests default to TargetPlatform.android — the swipe gesture
+      // is only active there.
+      await openForkedChat(tester);
+      await tapSelectedCardButton(tester, 'Maximize (read mode)');
+      expect(find.byType(ReadOverlay), findsOneWidget);
+      expect(
+        inOverlay(find.textContaining('edited v2', findRichText: true)),
+        findsOneWidget,
+      );
+      final body = inOverlay(find.byType(SingleChildScrollView));
+
+      // Swipe down past the top edge → previous turn.
+      await tester.drag(body, const Offset(0, 250));
+      await tester.pumpAndSettle();
+      expect(
+        inOverlay(find.textContaining('second answer', findRichText: true)),
+        findsOneWidget,
+      );
+
+      // Swipe up past the bottom edge → next turn.
+      await tester.drag(body, const Offset(0, -250));
+      await tester.pumpAndSettle();
+      expect(
+        inOverlay(find.textContaining('edited v2', findRichText: true)),
+        findsOneWidget,
+      );
+
+      // A drag below the threshold stays put.
+      await tester.drag(body, const Offset(0, 40));
+      await tester.pumpAndSettle();
+      expect(
+        inOverlay(find.textContaining('edited v2', findRichText: true)),
+        findsOneWidget,
+      );
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+      await unmountApp(tester);
+    });
+
     testWidgets('read mode resumes after an app restart', (tester) async {
       await openForkedChat(tester);
       await tapSelectedCardButton(tester, 'Maximize (read mode)');
@@ -475,6 +517,174 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byType(ReadOverlay), findsNothing);
 
+      await unmountApp(tester);
+    });
+  });
+
+  group('polish (M5)', () {
+    Finder inOverlay(Finder matching) =>
+        find.descendant(of: find.byType(ReadOverlay), matching: matching);
+
+    testWidgets('sidebar search filters conversations via FTS',
+        (tester) async {
+      await seed(tester);
+      await tester.pumpWidget(app());
+      await tester.pumpAndSettle();
+      expect(find.text('Forked chat'), findsOneWidget);
+
+      // Content match (prefix): only the linear chat mentions entanglement.
+      await tester.enterText(find.byType(TextField), 'entangle');
+      await tester.pumpAndSettle();
+      expect(find.text('Linear chat'), findsOneWidget);
+      expect(find.text('Forked chat'), findsNothing);
+      expect(find.text('Assistant first'), findsNothing);
+
+      // No matches.
+      await tester.enterText(find.byType(TextField), 'xyzzy_not_there');
+      await tester.pumpAndSettle();
+      expect(find.text('No matching conversations.'), findsOneWidget);
+
+      // Clearing restores the full list.
+      await tester.tap(find.byTooltip('Clear search'));
+      await tester.pumpAndSettle();
+      expect(find.text('Forked chat'), findsOneWidget);
+      expect(find.text('Linear chat'), findsOneWidget);
+      expect(find.text('Assistant first'), findsOneWidget);
+
+      await unmountApp(tester);
+    });
+
+    testWidgets('read mode renders image assets and missing placeholders',
+        (tester) async {
+      await seed(tester);
+      await tester.pumpWidget(app());
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Linear chat'));
+      await tester.pumpAndSettle();
+
+      // Open read mode on the multimodal turn (present + missing pointer).
+      await tester.tap(find.textContaining('look at these'));
+      await tester.pump(const Duration(milliseconds: 350));
+      await tester.pumpAndSettle();
+      expect(find.byType(ReadOverlay), findsOneWidget);
+
+      final image = tester.widget<Image>(inOverlay(find.byType(Image)));
+      expect(
+        (image.image as FileImage).file.path,
+        endsWith('file_present.png'),
+      );
+      expect(
+        inOverlay(find.text('Image not included in the export')),
+        findsOneWidget,
+      );
+      // The raw markers (and M2's textual placeholder) are gone from the
+      // transcript. (The collapsed card behind the overlay still shows the
+      // prompt's raw text — only the overlay renders assets.)
+      expect(
+        inOverlay(find.textContaining('asset://', findRichText: true)),
+        findsNothing,
+      );
+      expect(
+        inOverlay(find.textContaining('[image attachment]', findRichText: true)),
+        findsNothing,
+      );
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+      await unmountApp(tester);
+    });
+
+    testWidgets('non-image assets render an attachment tile, not an image',
+        (tester) async {
+      // Defensive path: the real export never pointer-references its PDF/txt
+      // attachments (they are not copied), but a non-image row must not be
+      // fed to the image decoder.
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: AssetBlock(
+            asset: TurnAsset(
+              turnId: 'conv-x:t1',
+              kind: 'prompt',
+              path: '/nowhere/file_doc.pdf',
+              originalName: 'notes.pdf',
+            ),
+          ),
+        ),
+      ));
+      expect(find.textContaining('notes.pdf'), findsOneWidget);
+      expect(find.textContaining('Preview not available'), findsOneWidget);
+      expect(find.byType(Image), findsNothing);
+
+      await unmountApp(tester);
+    });
+
+    testWidgets('macOS gets a native menu bar and ⌘F focuses search',
+        (tester) async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+      try {
+        await seed(tester);
+        await tester.pumpWidget(app());
+        await tester.pumpAndSettle();
+
+        final menuBar =
+            tester.widget<PlatformMenuBar>(find.byType(PlatformMenuBar));
+        final labels = [
+          for (final menu in menuBar.menus) (menu as PlatformMenu).label,
+        ];
+        expect(labels, ['Canvas Chat', 'File', 'Edit']);
+        final fileItems = (menuBar.menus[1] as PlatformMenu)
+            .menus
+            .expand((item) => item is PlatformMenuItemGroup
+                ? item.members
+                : <PlatformMenuItem>[item])
+            .map((item) => item.label)
+            .toList();
+        expect(
+          fileItems,
+          ['Import Export Zip…', 'Import Extracted Folder…',
+              'Import Warnings…'],
+        );
+
+        // ⌘F focuses the sidebar search field even while the canvas has
+        // keyboard focus.
+        await tester.tap(find.text('Forked chat'));
+        await tester.pumpAndSettle();
+        await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
+        await tester.sendKeyEvent(LogicalKeyboardKey.keyF);
+        await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
+        await tester.pump();
+        final editable =
+            tester.widget<EditableText>(find.byType(EditableText));
+        expect(editable.focusNode.hasFocus, isTrue);
+
+        await unmountApp(tester);
+      } finally {
+        debugDefaultTargetPlatformOverride = null;
+      }
+    });
+
+    testWidgets('import warnings dialog lists the last run\'s warnings',
+        (tester) async {
+      // The synthetic export yields two import warnings: an unsupported
+      // content_type and the missing file_gone.dat asset.
+      await seed(tester);
+      await tester.pumpWidget(app());
+      await tester.pumpAndSettle();
+
+      // No native menu bar outside macOS.
+      expect(find.byType(PlatformMenuBar), findsNothing);
+
+      await tester.tap(find.byTooltip('Import ChatGPT export'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Last import warnings…'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Import warnings (2)'), findsOneWidget);
+      expect(find.textContaining('file_gone.dat'), findsOneWidget);
+      expect(find.textContaining('mystery_widget'), findsOneWidget);
+
+      await tester.tap(find.text('Close'));
+      await tester.pumpAndSettle();
       await unmountApp(tester);
     });
   });

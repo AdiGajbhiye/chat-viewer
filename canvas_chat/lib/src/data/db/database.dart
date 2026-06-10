@@ -154,4 +154,54 @@ class AppDatabase extends _$AppDatabase {
     ).get();
     return [for (final row in rows) row.read<String>('id')];
   }
+
+  /// Builds a safe FTS5 MATCH expression from free-form user text: each
+  /// whitespace-separated term becomes a quoted prefix query (`"term"*`),
+  /// terms implicitly ANDed. Returns '' for blank input. Quoting disarms
+  /// FTS5 query syntax (`AND`, `-`, `:` …) in user input.
+  static String ftsMatchQuery(String raw) {
+    final terms = raw.split(RegExp(r'\s+')).where((t) => t.isNotEmpty);
+    return [for (final t in terms) '"${t.replaceAll('"', '""')}"*'].join(' ');
+  }
+
+  /// Sidebar search (DESIGN.md §6 "FTS search over titles + content"):
+  /// conversations whose title contains [query] (newest first), followed by
+  /// FTS5 prompt/response matches (best rank first), deduplicated.
+  Future<List<Conversation>> searchConversations(String query) async {
+    final needle = query.trim().toLowerCase();
+    if (needle.isEmpty) return const [];
+
+    final results = <String, Conversation>{};
+    final all = await (select(conversations)
+          ..orderBy([
+            (c) => OrderingTerm.desc(c.updateTime),
+            (c) => OrderingTerm.desc(c.createTime),
+          ]))
+        .get();
+    for (final conversation in all) {
+      if (conversation.title.toLowerCase().contains(needle)) {
+        results[conversation.id] = conversation;
+      }
+    }
+
+    final byId = {for (final c in all) c.id: c};
+    final rows = await customSelect(
+      'SELECT t.conversation_id AS cid FROM turns_fts f '
+      'JOIN turns t ON t.rowid = f.rowid '
+      'WHERE turns_fts MATCH ? GROUP BY cid ORDER BY MIN(f.rank)',
+      variables: [Variable.withString(ftsMatchQuery(query))],
+      readsFrom: {turns, conversations},
+    ).get();
+    for (final row in rows) {
+      final conversation = byId[row.read<String>('cid')];
+      if (conversation != null) results[conversation.id] = conversation;
+    }
+    return results.values.toList();
+  }
+
+  /// The most recent import run, if any (import warnings UI).
+  Future<Import?> latestImport() => (select(imports)
+        ..orderBy([(i) => OrderingTerm.desc(i.id)])
+        ..limit(1))
+      .getSingleOrNull();
 }

@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:drift/drift.dart';
+import 'package:flutter/widgets.dart' show FocusNode;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../data/db/database.dart';
@@ -30,6 +31,43 @@ final conversationListProvider = StreamProvider<List<Conversation>>((ref) {
       (c) => OrderingTerm.desc(c.createTime),
     ]);
   return query.watch();
+});
+
+/// Current sidebar search text; '' = no filter (M5, DESIGN.md §6 sidebar).
+final searchQueryProvider =
+    NotifierProvider<SearchQuery, String>(SearchQuery.new);
+
+class SearchQuery extends Notifier<String> {
+  @override
+  String build() => '';
+
+  void set(String query) => state = query;
+}
+
+/// FTS results for a non-empty sidebar search: title matches first (newest
+/// first), then prompt/response FTS matches by rank. One-shot per query —
+/// search results don't need to live-update during an import.
+final searchResultsProvider =
+    FutureProvider.autoDispose.family<List<Conversation>, String>((ref, query) {
+  final db = ref.watch(databaseProvider);
+  return db.searchConversations(query);
+});
+
+/// Focus node of the sidebar search field, exposed so the macOS Find menu
+/// item / ⌘F shortcut can focus it from anywhere.
+final searchFocusNodeProvider = Provider<FocusNode>((ref) {
+  final node = FocusNode(debugLabel: 'conversation search');
+  ref.onDispose(node.dispose);
+  return node;
+});
+
+/// Assets referenced by one turn (`turn_assets` rows), for resolving the
+/// `asset://<pointerId>` markers in its markdown (M5).
+final turnAssetsProvider =
+    FutureProvider.autoDispose.family<List<TurnAsset>, String>((ref, turnId) {
+  final db = ref.watch(databaseProvider);
+  return (db.select(db.turnAssets)..where((a) => a.turnId.equals(turnId)))
+      .get();
 });
 
 /// Conversation selected in the sidebar; null = nothing selected.

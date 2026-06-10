@@ -1,9 +1,12 @@
+import 'dart:io';
 import 'dart:ui' show lerpDouble;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:gpt_markdown/gpt_markdown.dart';
+import 'package:path/path.dart' as p;
 
 import '../data/db/database.dart';
 import '../domain/grid_layout.dart';
@@ -38,8 +41,12 @@ class ReadOverlay extends ConsumerStatefulWidget {
 }
 
 class _ReadOverlayState extends ConsumerState<ReadOverlay> {
+  /// Drag-overscroll a swipe must accumulate to advance (Android).
+  static const _swipeAdvanceThreshold = 64.0;
+
   late String _focusedId = widget.initialTurnId;
   final _scrollController = ScrollController();
+  double _dragOverscroll = 0;
 
   @override
   void dispose() {
@@ -96,10 +103,17 @@ class _ReadOverlayState extends ConsumerState<ReadOverlay> {
               ),
               const Divider(height: 1),
               Expanded(
-                child: SingleChildScrollView(
-                  controller: _scrollController,
-                  padding: const EdgeInsets.all(20),
-                  child: _TurnBody(turn: cell.turn),
+                child: NotificationListener<ScrollNotification>(
+                  onNotification: (notification) =>
+                      _onScrollNotification(notification, cell),
+                  child: SingleChildScrollView(
+                    controller: _scrollController,
+                    // Always accept drags so swipe-to-advance works even
+                    // when the turn fits on one screen.
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    padding: const EdgeInsets.all(20),
+                    child: _TurnBody(turn: cell.turn),
+                  ),
                 ),
               ),
             ],
@@ -107,6 +121,32 @@ class _ReadOverlayState extends ConsumerState<ReadOverlay> {
         ),
       ),
     );
+  }
+
+  /// Android: swipe up/down also advances (DESIGN.md §6 read mode). Drag
+  /// overscroll past the transcript's top/bottom edge accumulates; on
+  /// release past the threshold the focus moves to the previous/next turn.
+  /// Normal in-content scrolling never overscrolls, so it is unaffected.
+  bool _onScrollNotification(ScrollNotification notification, GridCell cell) {
+    if (defaultTargetPlatform != TargetPlatform.android) return false;
+    switch (notification) {
+      case ScrollStartNotification():
+        _dragOverscroll = 0;
+      case OverscrollNotification(:final overscroll, :final dragDetails)
+          when dragDetails != null:
+        _dragOverscroll += overscroll;
+      case ScrollEndNotification():
+        final accumulated = _dragOverscroll;
+        _dragOverscroll = 0;
+        if (accumulated <= -_swipeAdvanceThreshold) {
+          _go(cell, GridDirection.up); // swipe down at the top → previous
+        } else if (accumulated >= _swipeAdvanceThreshold) {
+          _go(cell, GridDirection.down); // swipe up at the bottom → next
+        }
+      default:
+        break;
+    }
+    return false;
   }
 
   void _go(GridCell cell, GridDirection direction) {
@@ -227,14 +267,25 @@ class _ReadHeader extends StatelessWidget {
   }
 }
 
-class _TurnBody extends StatelessWidget {
+class _TurnBody extends ConsumerWidget {
   const _TurnBody({required this.turn});
 
   final Turn turn;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
+    // Pointer id (basename of the copied file) → asset row, for resolving
+    // `asset://` markers. Null while the rows load; missing assets have
+    // path='' rows and resolve to the "not in export" placeholder.
+    final assetRows = ref.watch(turnAssetsProvider(turn.id)).value;
+    final assetsByPointer = assetRows == null
+        ? null
+        : {
+            for (final asset in assetRows)
+              if (asset.path.isNotEmpty)
+                p.basenameWithoutExtension(asset.path): asset,
+          };
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -244,11 +295,14 @@ class _TurnBody extends StatelessWidget {
             child: Padding(
               padding: const EdgeInsets.all(16),
               child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   Text('You', style: theme.textTheme.labelSmall),
                   const SizedBox(height: 8),
-                  GptMarkdown(_displayMarkdown(turn.promptMd)),
+                  _MarkdownWithAssets(
+                    markdown: turn.promptMd,
+                    assetsByPointer: assetsByPointer,
+                  ),
                 ],
               ),
             ),
@@ -259,7 +313,7 @@ class _TurnBody extends StatelessWidget {
             title: Text('Reasoning', style: theme.textTheme.labelLarge),
             childrenPadding: const EdgeInsets.only(bottom: 16),
             expandedCrossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [GptMarkdown(_displayMarkdown(thoughts))],
+            children: [GptMarkdown(thoughts)],
           ),
         Text(
           turn.modelSlug == null ? 'Assistant' : 'Assistant · ${turn.modelSlug}',
@@ -270,19 +324,142 @@ class _TurnBody extends StatelessWidget {
           Text('(no response)',
               style: TextStyle(color: theme.colorScheme.outline))
         else
-          GptMarkdown(_displayMarkdown(turn.responseMd)),
+          _MarkdownWithAssets(
+            markdown: turn.responseMd,
+            assetsByPointer: assetsByPointer,
+          ),
       ],
     );
   }
 }
 
-/// Image markers (`![image](asset://…)`) become a textual placeholder for
-/// now — rendering imported assets is M5 scope, and the app must never hit
-/// the network trying to resolve `asset://` as a URL.
-String _displayMarkdown(String md) => md.replaceAll(
-      RegExp(r'!\[image\]\(asset://[^)]*\)'),
-      '*[image attachment]*',
+/// Markdown with the importer's `![image](asset://<pointerId>)` markers
+/// resolved against `turn_assets` rows (M5): markdown segments interleaved
+/// with [AssetBlock]s. The `asset://` URIs never reach the markdown renderer,
+/// so nothing ever hits the network.
+class _MarkdownWithAssets extends StatelessWidget {
+  const _MarkdownWithAssets({
+    required this.markdown,
+    required this.assetsByPointer,
+  });
+
+  static final _assetMarker = RegExp(r'!\[image\]\(asset://([^)]+)\)');
+
+  final String markdown;
+
+  /// Pointer id → copied asset row; null while the rows are still loading.
+  final Map<String, TurnAsset>? assetsByPointer;
+
+  @override
+  Widget build(BuildContext context) {
+    final children = <Widget>[];
+    var start = 0;
+    for (final match in _assetMarker.allMatches(markdown)) {
+      final before = markdown.substring(start, match.start).trim();
+      if (before.isNotEmpty) children.add(GptMarkdown(before));
+      children.add(AssetBlock(asset: assetsByPointer?[match.group(1)!]));
+      start = match.end;
+    }
+    final tail = markdown.substring(start).trim();
+    if (tail.isNotEmpty || children.isEmpty) children.add(GptMarkdown(tail));
+    if (children.length == 1) return children.single;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      spacing: 12,
+      children: children,
     );
+  }
+}
+
+/// One resolved turn asset inside the read-mode transcript: an image
+/// rendered from the copied file, a generic attachment tile for non-image
+/// files (e.g. a PDF, defensive — the export never pointer-references them),
+/// or a "not included" placeholder when the export was missing the file
+/// (path='' rows) or the rows are still loading.
+@visibleForTesting
+class AssetBlock extends StatelessWidget {
+  const AssetBlock({super.key, required this.asset});
+
+  static const _imageExtensions = {
+    '.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp',
+  };
+
+  /// The copied asset, or null when missing/unresolved.
+  final TurnAsset? asset;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final asset = this.asset;
+    if (asset == null || asset.path.isEmpty) {
+      return _tile(
+        theme,
+        icon: Icons.image_not_supported_outlined,
+        label: 'Image not included in the export',
+      );
+    }
+    final extension = p.extension(asset.path).toLowerCase();
+    if (!_imageExtensions.contains(extension)) {
+      return _tile(
+        theme,
+        icon: Icons.attach_file,
+        label: asset.originalName ?? p.basename(asset.path),
+        detail: 'Preview not available',
+      );
+    }
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxWidth: (asset.width ?? 480).toDouble().clamp(64, 480),
+          maxHeight: 480,
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(8),
+          child: Image.file(
+            File(asset.path),
+            fit: BoxFit.contain,
+            errorBuilder: (context, error, stackTrace) => _tile(
+              theme,
+              icon: Icons.broken_image_outlined,
+              label: asset.originalName ?? p.basename(asset.path),
+              detail: 'Could not decode image',
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _tile(
+    ThemeData theme, {
+    required IconData icon,
+    required String label,
+    String? detail,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 18, color: theme.colorScheme.outline),
+          const SizedBox(width: 8),
+          Flexible(
+            child: Text(
+              detail == null ? label : '$label · $detail',
+              style: theme.textTheme.bodySmall
+                  ?.copyWith(color: theme.colorScheme.outline),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
 
 /// Navigate → read transition (DESIGN.md §6 "Rendering approach"): a route
 /// whose page grows hero-style from the tapped cell's on-screen rect to the

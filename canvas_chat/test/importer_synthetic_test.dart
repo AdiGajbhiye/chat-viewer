@@ -80,7 +80,7 @@ void main() {
     test('present asset is copied with its original extension', () async {
       final copied = File(p.join(assetsDir.path, 'file_present.png'));
       expect(copied.existsSync(), isTrue);
-      expect(copied.readAsBytesSync(), [0x89, 0x50, 0x4E, 0x47]);
+      expect(copied.readAsBytesSync(), kTinyPngBytes);
       final rows = await (db.select(db.turnAssets)
             ..where((a) => a.path.equals(copied.path)))
           .get();
