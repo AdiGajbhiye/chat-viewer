@@ -14,14 +14,16 @@ class NodeCard extends StatelessWidget {
     super.key,
     required this.cell,
     required this.selected,
-    required this.onSelect,
     required this.onNavigate,
+    required this.onMaximize,
   });
 
   final GridCell cell;
   final bool selected;
-  final VoidCallback onSelect;
   final ValueChanged<GridDirection> onNavigate;
+
+  /// Enter read mode for this turn (card tap or ⊕, DESIGN.md §6).
+  final VoidCallback onMaximize;
 
   @override
   Widget build(BuildContext context) {
@@ -38,7 +40,8 @@ class NodeCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(12),
         elevation: selected ? 3 : 1,
         child: InkWell(
-          onTap: onSelect,
+          // Tap a node → read mode for that node (DESIGN.md §6).
+          onTap: onMaximize,
           borderRadius: BorderRadius.circular(12),
           child: Container(
             decoration: BoxDecoration(
@@ -56,7 +59,11 @@ class NodeCard extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _QuickButtonStrip(cell: cell, onNavigate: onNavigate),
+                _QuickButtonStrip(
+                  cell: cell,
+                  onNavigate: onNavigate,
+                  onMaximize: onMaximize,
+                ),
                 const SizedBox(height: 2),
                 Expanded(
                   child: Text(
@@ -101,12 +108,17 @@ String _collapseWhitespace(String text) =>
 
 /// ⊖ ⊕ · ↑ ↓ ← → (DESIGN.md §6). In navigate mode the arrows move the
 /// *selection*; minimize is a no-op shown disabled; maximize enters read
-/// mode — wired up in M4, disabled until then.
+/// mode.
 class _QuickButtonStrip extends StatelessWidget {
-  const _QuickButtonStrip({required this.cell, required this.onNavigate});
+  const _QuickButtonStrip({
+    required this.cell,
+    required this.onNavigate,
+    required this.onMaximize,
+  });
 
   final GridCell cell;
   final ValueChanged<GridDirection> onNavigate;
+  final VoidCallback onMaximize;
 
   @override
   Widget build(BuildContext context) {
@@ -117,10 +129,10 @@ class _QuickButtonStrip extends StatelessWidget {
           tooltip: 'Minimize',
           onPressed: null,
         ),
-        const _QuickButton(
+        _QuickButton(
           icon: Icons.open_in_full,
           tooltip: 'Maximize (read mode)',
-          onPressed: null,
+          onPressed: onMaximize,
         ),
         const Spacer(),
         _QuickButton(

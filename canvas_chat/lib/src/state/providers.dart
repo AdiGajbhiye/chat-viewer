@@ -4,7 +4,6 @@ import 'package:drift/drift.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../data/db/database.dart';
-import '../domain/active_path.dart';
 import '../domain/grid_layout.dart';
 
 /// The app database. Overridden in `main()` (and in tests) with a concrete
@@ -46,31 +45,16 @@ class SelectedConversationId extends Notifier<String?> {
   void select(String? id) => state = id;
 }
 
-/// A conversation opened for reading: its row plus the active path through
-/// its turn tree (M2's bare read mode walks this path with ↑/↓).
-class ConversationPath {
-  ConversationPath(this.conversation, this.path);
-
-  final Conversation conversation;
-
-  /// Active path, root → leaf. Empty for conversations without turns.
-  final List<Turn> path;
-}
-
-final conversationPathProvider =
-    StreamProvider.autoDispose.family<ConversationPath, String>((ref, id) {
+/// Persisted canvas state for a conversation — mode / focused turn /
+/// viewport (DESIGN.md §4 `canvas_state`). One-shot read used to *restore*
+/// state when a canvas opens; deliberately not a stream so the canvas's own
+/// writes never feed back into it.
+final canvasStateProvider =
+    FutureProvider.autoDispose.family<CanvasState?, String>((ref, id) {
   final db = ref.watch(databaseProvider);
-  final turnsQuery = db.select(db.turns)
-    ..where((t) => t.conversationId.equals(id));
-  return turnsQuery.watch().asyncMap((turns) async {
-    final conversation = await (db.select(db.conversations)
-          ..where((c) => c.id.equals(id)))
-        .getSingle();
-    return ConversationPath(
-      conversation,
-      activePath(turns, conversation.currentTurnId),
-    );
-  });
+  return (db.select(db.canvasStates)
+        ..where((s) => s.conversationId.equals(id)))
+      .getSingleOrNull();
 });
 
 /// A conversation opened on the canvas: its row plus the grid layout of its

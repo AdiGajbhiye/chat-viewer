@@ -7,7 +7,9 @@ import 'package:canvas_chat/src/data/import/export_source.dart';
 import 'package:canvas_chat/src/state/providers.dart';
 import 'package:canvas_chat/src/ui/canvas/minimap.dart';
 import 'package:canvas_chat/src/ui/canvas/node_card.dart';
+import 'package:canvas_chat/src/ui/read_view.dart';
 import 'package:drift/native.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -233,12 +235,18 @@ void main() {
       matching: find.widgetWithIcon(IconButton, Icons.arrow_back),
     ));
     expect(leftButton.onPressed, isNull);
-    // Maximize is present but disabled until M4 wires read mode.
+    // Maximize is enabled (enters read mode); minimize stays a disabled
+    // no-op in navigate mode.
     final maximize = tester.widget<IconButton>(find.descendant(
       of: find.byWidget(selectedCard(tester)),
       matching: find.widgetWithIcon(IconButton, Icons.open_in_full),
     ));
-    expect(maximize.onPressed, isNull);
+    expect(maximize.onPressed, isNotNull);
+    final minimize = tester.widget<IconButton>(find.descendant(
+      of: find.byWidget(selectedCard(tester)),
+      matching: find.widgetWithIcon(IconButton, Icons.close_fullscreen),
+    ));
+    expect(minimize.onPressed, isNull);
 
     await unmountApp(tester);
   });
@@ -269,5 +277,205 @@ void main() {
     expect(find.textContaining('question 39'), findsNothing);
 
     await unmountApp(tester);
+  });
+
+  group('read mode (M4)', () {
+    Finder inOverlay(Finder matching) =>
+        find.descendant(of: find.byType(ReadOverlay), matching: matching);
+
+    /// This conversation's persisted `canvas_state` row, if any.
+    Future<CanvasState?> readState(WidgetTester tester, String id) async {
+      // Flush the canvas's fire-and-forget upsert before reading it back.
+      await tester.pump();
+      return await tester.runAsync<CanvasState?>(() => (db.select(db.canvasStates)
+            ..where((s) => s.conversationId.equals(id)))
+          .getSingleOrNull());
+    }
+
+    /// Opens the forked fixture's canvas (selection starts on "edited v2").
+    Future<void> openForkedChat(WidgetTester tester) async {
+      await seed(tester);
+      await tester.pumpWidget(app());
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Forked chat'));
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('maximize opens a centered overlay and persists read mode',
+        (tester) async {
+      // Widget tests default to TargetPlatform.android; this test exercises
+      // the desktop presentation. Reset inline: the binding's end-of-test
+      // invariants run before tearDown callbacks.
+      debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+      try {
+        await openForkedChat(tester);
+
+        await tapSelectedCardButton(tester, 'Maximize (read mode)');
+
+        // Desktop presentation: centered ~85% overlay (800×600 → 680×510)
+        // over the still-mounted canvas.
+        expect(find.byType(ReadOverlay), findsOneWidget);
+        expect(tester.getSize(find.byType(ReadOverlay)), const Size(680, 510));
+        expect(find.byType(NodeCard), findsWidgets);
+        expect(
+          inOverlay(find.textContaining('edited v2', findRichText: true)),
+          findsOneWidget,
+        );
+        expect(inOverlay(find.text('(no response)')), findsOneWidget);
+        expect(inOverlay(find.text('⑂ Branch 1 of 3')), findsOneWidget);
+
+        var state = await readState(tester, 'conv-forked');
+        expect(state?.mode, 'read');
+        expect(state?.focusedTurnId, 'conv-forked:f-u3b');
+
+        // Esc exits back to navigate mode.
+        await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+        await tester.pumpAndSettle();
+        expect(find.byType(ReadOverlay), findsNothing);
+        state = await readState(tester, 'conv-forked');
+        expect(state?.mode, 'navigate');
+
+        await unmountApp(tester);
+      } finally {
+        debugDefaultTargetPlatformOverride = null;
+      }
+    });
+
+    testWidgets('tap opens read mode; arrows traverse; minimize recenters',
+        (tester) async {
+      await openForkedChat(tester);
+
+      // Tapping the card body (not a quick button) enters read mode.
+      await tester.tap(find.textContaining('edited v2'));
+      await tester.pump(const Duration(milliseconds: 350));
+      await tester.pumpAndSettle();
+      expect(find.byType(ReadOverlay), findsOneWidget);
+      expect(inOverlay(find.text('⑂ Branch 1 of 3')), findsOneWidget);
+
+      // ↑ walks to the parent turn (the regenerated response).
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
+      await tester.pumpAndSettle();
+      expect(
+        inOverlay(find.textContaining('second answer', findRichText: true)),
+        findsOneWidget,
+      );
+      expect(inOverlay(find.text('⑂ Branch 1 of 2')), findsOneWidget);
+
+      // → jumps across branches at the same depth.
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+      await tester.pumpAndSettle();
+      expect(
+        inOverlay(find.textContaining('first answer', findRichText: true)),
+        findsOneWidget,
+      );
+      expect(inOverlay(find.text('⑂ Branch 2 of 2')), findsOneWidget);
+
+      // ↓ continues down that branch; the quick button mirrors ↑.
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+      await tester.pumpAndSettle();
+      expect(
+        inOverlay(find.textContaining('follow up', findRichText: true)),
+        findsOneWidget,
+      );
+      await tester.tap(inOverlay(find.byTooltip('Go up')));
+      await tester.pumpAndSettle();
+      expect(
+        inOverlay(find.textContaining('first answer', findRichText: true)),
+        findsOneWidget,
+      );
+
+      // Minimize returns to navigate mode centered on the node just read.
+      await tester.tap(inOverlay(find.byTooltip('Minimize')));
+      await tester.pumpAndSettle();
+      expect(find.byType(ReadOverlay), findsNothing);
+      expect(selectedCard(tester).cell.turn.responseMd, 'first answer');
+      final cardCenter = tester
+          .getCenter(find.byKey(const ValueKey('node-conv-forked:f-a1')));
+      // Canvas pane spans x ∈ [321, 800], y ∈ [0, 600] → center (560.5, 300).
+      expect(cardCenter.dx, closeTo(560.5, 1));
+      expect(cardCenter.dy, closeTo(300, 1));
+
+      final state = await readState(tester, 'conv-forked');
+      expect(state?.mode, 'navigate');
+      expect(state?.focusedTurnId, 'conv-forked:f-a1');
+
+      await unmountApp(tester);
+    });
+
+    testWidgets('read mode is a full-screen route on Android',
+        (tester) async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.android;
+      try {
+        await openForkedChat(tester);
+
+        await tapSelectedCardButton(tester, 'Maximize (read mode)');
+        expect(find.byType(ReadOverlay), findsOneWidget);
+        expect(tester.getSize(find.byType(ReadOverlay)), const Size(800, 600));
+
+        // Back (pop) returns to the canvas.
+        await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+        await tester.pumpAndSettle();
+        expect(find.byType(ReadOverlay), findsNothing);
+
+        await unmountApp(tester);
+      } finally {
+        debugDefaultTargetPlatformOverride = null;
+      }
+    });
+
+    testWidgets('focus and viewport persist per conversation and restore',
+        (tester) async {
+      await openForkedChat(tester);
+
+      // Fit the whole graph and move the selection to the root prompt.
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyF);
+      await tester.pumpAndSettle();
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
+      await tester.pumpAndSettle();
+      expect(selectedCard(tester).cell.turn.id, 'conv-forked:f-u1');
+      // Let the debounced viewport write flush.
+      await tester.pump(const Duration(milliseconds: 350));
+
+      await tester.tap(find.text('Linear chat'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('quantum entanglement'), findsOneWidget);
+
+      await tester.tap(find.text('Forked chat'));
+      await tester.pumpAndSettle();
+      // Selection and the fitted viewport are restored: all 6 cells visible
+      // (the default open would be 1:1 on the current turn, culling lanes).
+      expect(selectedCard(tester).cell.turn.id, 'conv-forked:f-u1');
+      expect(find.byType(NodeCard), findsNWidgets(6));
+      expect(find.textContaining('edited v1'), findsOneWidget);
+
+      await unmountApp(tester);
+    });
+
+    testWidgets('read mode resumes after an app restart', (tester) async {
+      await openForkedChat(tester);
+      await tapSelectedCardButton(tester, 'Maximize (read mode)');
+      expect(find.byType(ReadOverlay), findsOneWidget);
+
+      // "Quit" with read mode open; relaunch on the same database.
+      await unmountApp(tester);
+      await tester.pumpWidget(app());
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Forked chat'));
+      await tester.pumpAndSettle();
+
+      // The conversation reopens in read mode on the focused turn.
+      expect(find.byType(ReadOverlay), findsOneWidget);
+      expect(
+        inOverlay(find.textContaining('edited v2', findRichText: true)),
+        findsOneWidget,
+      );
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+      expect(find.byType(ReadOverlay), findsNothing);
+
+      await unmountApp(tester);
+    });
   });
 }
