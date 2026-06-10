@@ -30,13 +30,52 @@ file, check `git log`, then implement the **first milestone below that is not
 | M2 | Conversation list + bare read mode | done | App launches on macOS. Sidebar lists imported conversations (sorted by update_time). Selecting one opens a minimal read mode: full prompt+response markdown, ↑/↓ walks the active path. Import triggered from UI with progress. |
 | M3 | Navigate mode (canvas) | done | Grid/lane layout per DESIGN.md §6: uniform collapsed cards (query + meta), quick-button strip, edges with active-path emphasis, pan/zoom, viewport culling, arrow-key/button selection, minimap. |
 | M4 | Read mode integration | done | Maximize/tap → read mode (full-screen Android, overlay macOS), hero transition, ↑↓←→ traversal with branch breadcrumb, minimize returns centered, mode/focus/viewport persisted per conversation (canvas_state). |
-| M5 | Polish | todo | FTS search over prompts/responses, image/PDF assets render, macOS menu + shortcuts, Android back behavior, import warnings UI, app icon optional. |
+| M5 | Polish | done | FTS search over prompts/responses, image/PDF assets render, macOS menu + shortcuts, Android back behavior, import warnings UI, app icon optional. |
 
 Statuses: `todo` → `in_progress` → `done` (or `blocked`).
 
 ## Log
 
 <!-- newest first: date · milestone · what was done / decisions / blockers -->
+- 2026-06-11 · M5 · Done — all milestones complete. Sidebar search: an FTS5
+  query over `turns_fts` (prompt/response) grouped to conversations by best
+  rank, unioned with case-insensitive title matching (title hits first,
+  newest first, then content hits by rank, dedup'd);
+  `AppDatabase.ftsMatchQuery` quotes each whitespace-separated term as a
+  `"term"*` prefix query so FTS5 operators in user input are inert. Asset
+  rendering: read mode splits markdown on the importer's
+  `![image](asset://<pointerId>)` markers and resolves each against the
+  turn's `turn_assets` rows (pointer id = copied file's basename) — images
+  render via `Image.file` (decode-failure errorBuilder), placeholder rows
+  (path='') and unresolved pointers show an "Image not included in the
+  export" tile, and non-image extensions get an attachment tile (defensive:
+  the export's PDF/txt are attachment-only, never pointer-referenced, so no
+  rows exist for them — graceful = nothing to render, nothing crashes).
+  macOS: `PlatformMenuBar` (Canvas Chat ▸ Quit, File ▸ Import Export
+  Zip/Folder + Import Warnings, Edit ▸ Find ⌘F) plus an in-app ⌘F
+  CallbackShortcut focusing the sidebar search field (works while the
+  canvas has focus); canvas/read shortcuts from M3/M4 unchanged. Android:
+  read-mode swipe-to-advance — drag-overscroll accumulated past the
+  transcript's top/bottom edge (≥64 px on release) moves focus to the
+  previous/next turn; normal scrolling never overscrolls so it is
+  unaffected; back already pops the read route (PopupRoute). Import
+  warnings UI: success snackbar gains a Details action and the sidebar
+  import menu a "Last import warnings…" item, both opening a dialog over
+  the latest `imports` row's warnings_json. `flutter analyze` clean,
+  72 tests pass (57 kept + 9 search unit/db tests + 6 M5 widget tests),
+  `flutter build macos --debug` succeeds. Decisions:
+  - App icon left as the Flutter default (explicitly optional in the
+    acceptance criteria).
+  - Search results are a one-shot query per keystroke (not a live stream):
+    cheap at this scale and avoids re-running FTS on every import insert.
+  - Navigate-mode cards still show the prompt's raw text (markers and all)
+    — only read mode resolves assets; the 2-line collapsed preview isn't
+    worth an asset lookup per card.
+  - No View ▸ Zoom-to-fit menu item: it would need menu→canvas plumbing for
+    a shortcut (`f`) the focused canvas already handles.
+  - Test fixture's `.dat` asset is now a real 1×1 PNG (`kTinyPngBytes`) so
+    the rendered image can actually decode; the M1 byte-equality assertion
+    was updated to match the new bytes.
 - 2026-06-11 · M4 · Done. Read mode integrated with the canvas. Card tap or
   ⊕ pushes a `ReadModeRoute` (custom `PopupRoute`) that grows hero-style
   from the cell's on-screen rect — full-screen on Android
