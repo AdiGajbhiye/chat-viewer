@@ -28,7 +28,7 @@ file, check `git log`, then implement the **first milestone below that is not
 |---|---|---|---|
 | M1 | Import + data layer | done | Importer parses the real export from a zip or folder: 1,594 conversations / 12,185 messages, turn pairing per DESIGN.md §2, drift schema per §4, assets copied + renamed. Tests cover: counts match, all 4 content types handled, forks produce multiple child turns, asset resolution, idempotent re-import. |
 | M2 | Conversation list + bare read mode | done | App launches on macOS. Sidebar lists imported conversations (sorted by update_time). Selecting one opens a minimal read mode: full prompt+response markdown, ↑/↓ walks the active path. Import triggered from UI with progress. |
-| M3 | Navigate mode (canvas) | todo | Grid/lane layout per DESIGN.md §6: uniform collapsed cards (query + meta), quick-button strip, edges with active-path emphasis, pan/zoom, viewport culling, arrow-key/button selection, minimap. |
+| M3 | Navigate mode (canvas) | done | Grid/lane layout per DESIGN.md §6: uniform collapsed cards (query + meta), quick-button strip, edges with active-path emphasis, pan/zoom, viewport culling, arrow-key/button selection, minimap. |
 | M4 | Read mode integration | todo | Maximize/tap → read mode (full-screen Android, overlay macOS), hero transition, ↑↓←→ traversal with branch breadcrumb, minimize returns centered, mode/focus/viewport persisted per conversation (canvas_state). |
 | M5 | Polish | todo | FTS search over prompts/responses, image/PDF assets render, macOS menu + shortcuts, Android back behavior, import warnings UI, app icon optional. |
 
@@ -37,6 +37,44 @@ Statuses: `todo` → `in_progress` → `done` (or `blocked`).
 ## Log
 
 <!-- newest first: date · milestone · what was done / decisions / blockers -->
+- 2026-06-10 · M3 · Done. Navigate-mode canvas replaces the detail pane.
+  Grid layout engine (`lib/src/domain/grid_layout.dart`): pure function of
+  the turn tree — active path (reused from `active_path.dart`) in lane 0,
+  each additional fork branch claims the nearest free lane to the right at
+  its fork row (interval-based occupancy so non-overlapping branches reuse
+  lanes), per-cell up/down/left/right neighbor ids per DESIGN.md §6
+  semantics. Canvas (`lib/src/ui/canvas/`): hand-rolled viewport
+  (translate+scale `ChangeNotifier`), drag/pinch pan-zoom, Cmd/Ctrl+scroll
+  zoom, plain scroll pan, double-tap / `f` fit, exact viewport culling of
+  uniform 260×112 cards, one `CustomPainter` for all edges (rounded elbows,
+  active path emphasized, others dimmed), quick-button strip on every card,
+  tappable minimap with viewport rect. `flutter analyze` clean, 52 tests
+  pass (8 new grid-layout unit tests), `flutter build macos --debug`
+  succeeds. Decisions:
+  - Minimize/maximize buttons render disabled: read mode integration is M4;
+    in navigate mode the arrows move the *selection* (kept on-screen via a
+    minimal ensure-visible pan).
+  - Initial viewport = 1:1 centered on the conversation's current turn (not
+    fit-to-content): long chats open readable at their latest turn, and it
+    makes culling real from frame one. Viewport persistence is M4.
+  - Within a non-active branch, the latest sibling continues the branch's
+    lane at a sub-fork (same "latest wins" rule as active-path extension);
+    unreachable turns from corrupt cycles are parked in fresh lanes so
+    everything stays visible.
+  - Lane continuity means every lane index < laneCount holds ≥1 cell, so
+    left/right neighbors always resolve in adjacent lanes.
+  - Layout runs synchronously in the provider (pure O(n), ≤ a few hundred
+    turns per conversation) — the isolate from DESIGN.md §3 isn't warranted
+    yet.
+  - M2's read-mode widget tests were retired with the detail pane (ReadView
+    itself is untouched and returns as the M4 overlay); canvas widget tests
+    now cover open-on-current-turn, fit, fork badges, arrow/button
+    selection + disabled-at-edge buttons, culling on a 40-turn chat, and
+    minimap jumps.
+  - Widget-test gotcha for M4: the canvas GestureDetector listens for
+    double taps, so single taps inside it (cards, minimap) sit in the
+    gesture arena for ~300 ms — pump ≥350 ms after `tester.tap` before
+    asserting.
 - 2026-06-10 · M2 · Done. Two-pane home (sidebar 320px + detail), conversation
   list sorted by update_time desc (drift stream query, live during import),
   bare read mode (prompt/response via gpt_markdown, collapsible Reasoning
