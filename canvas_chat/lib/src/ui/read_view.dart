@@ -166,9 +166,9 @@ class _ReadOverlayState extends ConsumerState<ReadOverlay> {
 }
 
 /// Quick-button strip + title + breadcrumb. Same buttons as the navigate
-/// card (DESIGN.md §6 "the quick-button strip stays on top"): minimize exits
-/// read mode, maximize is a no-op shown disabled, arrows move the *reading
-/// focus*.
+/// card (DESIGN.md §6 "the quick-button strip stays on top"): a single zoom
+/// button minimizes back out of read mode (the navigate card's maximize), and
+/// the arrows move the *reading focus*.
 class _ReadHeader extends StatelessWidget {
   const _ReadHeader({
     required this.title,
@@ -206,11 +206,6 @@ class _ReadHeader extends StatelessWidget {
               tooltip: 'Minimize',
               icon: const Icon(Icons.close_fullscreen),
               onPressed: onMinimize,
-            ),
-            const IconButton(
-              tooltip: 'Maximize (read mode)',
-              icon: Icon(Icons.open_in_full),
-              onPressed: null,
             ),
             const SizedBox(width: 8),
             Expanded(

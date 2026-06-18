@@ -111,9 +111,9 @@ class NodeCard extends StatelessWidget {
 String _collapseWhitespace(String text) =>
     text.replaceAll(RegExp(r'\s+'), ' ').trim();
 
-/// ⊖ ⊕ · ↑ ↓ ← → (DESIGN.md §6). In navigate mode the arrows move the
-/// *selection*; minimize is a no-op shown disabled; maximize enters read
-/// mode.
+/// ⤢ · ↑ ↓ ← → (DESIGN.md §6). In navigate mode the arrows move the
+/// *selection*; a single zoom button maximizes the card into read mode (in
+/// read mode the same button minimizes back out).
 class _QuickButtonStrip extends StatelessWidget {
   const _QuickButtonStrip({
     required this.cell,
@@ -129,11 +129,6 @@ class _QuickButtonStrip extends StatelessWidget {
   Widget build(BuildContext context) {
     return Row(
       children: [
-        const _QuickButton(
-          icon: Icons.close_fullscreen,
-          tooltip: 'Minimize',
-          onPressed: null,
-        ),
         _QuickButton(
           icon: Icons.open_in_full,
           tooltip: 'Maximize (read mode)',
