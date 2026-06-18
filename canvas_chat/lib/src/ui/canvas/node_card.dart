@@ -73,7 +73,7 @@ class NodeCard extends StatelessWidget {
                     cell.turn.promptMd.isEmpty
                         ? '(no prompt)'
                         : _collapseWhitespace(cell.turn.promptMd),
-                    maxLines: 5,
+                    maxLines: 8,
                     overflow: TextOverflow.ellipsis,
                     style: theme.textTheme.bodyMedium
                         ?.copyWith(fontWeight: FontWeight.w500),

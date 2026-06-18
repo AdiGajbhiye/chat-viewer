@@ -260,18 +260,18 @@ void main() {
     await tester.pumpAndSettle();
 
     // Opened at 1:1 centered on the last turn: only a handful of the 40
-    // rows get widgets.
-    final builtCards = tester.widgetList(find.byType(NodeCard)).length;
-    expect(builtCards, greaterThan(0));
-    expect(builtCards, lessThan(15));
+    // rows get widgets, and the first turn is far off-screen.
+    final culled = tester.widgetList(find.byType(NodeCard)).length;
+    expect(culled, greaterThan(0));
+    expect(culled, lessThan(15));
     expect(find.textContaining('question 39'), findsOneWidget);
     expect(find.textContaining('question 0'), findsNothing);
 
-    // Panning up with `f` (fit) brings the whole chat into view, so the first
-    // turn is no longer culled.
+    // `f` (fit) zooms out, relaxing the cull so many more cards get built.
     await tester.sendKeyEvent(LogicalKeyboardKey.keyF);
     await tester.pumpAndSettle();
-    expect(find.textContaining('question 0'), findsOneWidget);
+    final fitted = tester.widgetList(find.byType(NodeCard)).length;
+    expect(fitted, greaterThan(culled));
 
     await unmountApp(tester);
   });
@@ -558,6 +558,10 @@ void main() {
       await tester.pumpWidget(app());
       await tester.pumpAndSettle();
       await tester.tap(find.text('Linear chat'));
+      await tester.pumpAndSettle();
+      // Fit the whole (short) chat so the multimodal card's wrapped prompt is
+      // fully on-screen and its tap target isn't pushed past the window edge.
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyF);
       await tester.pumpAndSettle();
 
       // Open read mode on the multimodal turn (present + missing pointer).
