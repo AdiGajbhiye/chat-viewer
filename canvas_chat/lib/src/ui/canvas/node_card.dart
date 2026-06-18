@@ -15,13 +15,11 @@ class NodeCard extends StatelessWidget {
     super.key,
     required this.cell,
     required this.selected,
-    required this.onNavigate,
     required this.onMaximize,
   });
 
   final GridCell cell;
   final bool selected;
-  final ValueChanged<GridDirection> onNavigate;
 
   /// Enter read mode for this turn (card tap or ⊕, DESIGN.md §6).
   final VoidCallback onMaximize;
@@ -60,11 +58,7 @@ class NodeCard extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _QuickButtonStrip(
-                  cell: cell,
-                  onNavigate: onNavigate,
-                  onMaximize: onMaximize,
-                ),
+                _QuickButtonStrip(onMaximize: onMaximize),
                 const SizedBox(height: 4),
                 // The question fills the card (the assistant reply is read
                 // mode only — navigate mode stays a map of prompts).
@@ -111,18 +105,12 @@ class NodeCard extends StatelessWidget {
 String _collapseWhitespace(String text) =>
     text.replaceAll(RegExp(r'\s+'), ' ').trim();
 
-/// ⤢ · ↑ ↓ ← → (DESIGN.md §6). In navigate mode the arrows move the
-/// *selection*; a single zoom button maximizes the card into read mode (in
-/// read mode the same button minimizes back out).
+/// A single zoom button that maximizes the card into read mode (DESIGN.md
+/// §6). Navigate-mode selection moves via arrow keys / tapping cells, so the
+/// per-card arrow buttons were dropped to keep the map uncluttered.
 class _QuickButtonStrip extends StatelessWidget {
-  const _QuickButtonStrip({
-    required this.cell,
-    required this.onNavigate,
-    required this.onMaximize,
-  });
+  const _QuickButtonStrip({required this.onMaximize});
 
-  final GridCell cell;
-  final ValueChanged<GridDirection> onNavigate;
   final VoidCallback onMaximize;
 
   @override
@@ -133,30 +121,6 @@ class _QuickButtonStrip extends StatelessWidget {
           icon: Icons.open_in_full,
           tooltip: 'Maximize (read mode)',
           onPressed: onMaximize,
-        ),
-        const Spacer(),
-        _QuickButton(
-          icon: Icons.arrow_upward,
-          tooltip: 'Go up',
-          onPressed: cell.up == null ? null : () => onNavigate(GridDirection.up),
-        ),
-        _QuickButton(
-          icon: Icons.arrow_downward,
-          tooltip: 'Go down',
-          onPressed:
-              cell.down == null ? null : () => onNavigate(GridDirection.down),
-        ),
-        _QuickButton(
-          icon: Icons.arrow_back,
-          tooltip: 'Go left',
-          onPressed:
-              cell.left == null ? null : () => onNavigate(GridDirection.left),
-        ),
-        _QuickButton(
-          icon: Icons.arrow_forward,
-          tooltip: 'Go right',
-          onPressed:
-              cell.right == null ? null : () => onNavigate(GridDirection.right),
         ),
       ],
     );

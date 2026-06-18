@@ -184,7 +184,7 @@ void main() {
     await unmountApp(tester);
   });
 
-  testWidgets('arrow keys and quick buttons move the selection',
+  testWidgets('arrow keys move the selection; cards show only a zoom button',
       (tester) async {
     await seed(tester);
     await tester.pumpWidget(app());
@@ -218,35 +218,31 @@ void main() {
     await tester.pumpAndSettle();
     expect(selectedCard(tester).cell.turn.id, 'conv-forked:f-u3b');
 
-    // Quick buttons mirror the arrows: ↑ ↑ from the leaf reaches the prompt
-    // turn; its ↑/← are disabled (no parent, lane 0).
-    await tapSelectedCardButton(tester, 'Go up');
-    expect(selectedCard(tester).cell.turn.responseMd, 'second answer');
-    await tapSelectedCardButton(tester, 'Go up');
-    expect(selectedCard(tester).cell.turn.id, 'conv-forked:f-u1');
-
-    final upButton = tester.widget<IconButton>(find.descendant(
-      of: find.byWidget(selectedCard(tester)),
-      matching: find.widgetWithIcon(IconButton, Icons.arrow_upward),
-    ));
-    expect(upButton.onPressed, isNull);
-    final leftButton = tester.widget<IconButton>(find.descendant(
-      of: find.byWidget(selectedCard(tester)),
-      matching: find.widgetWithIcon(IconButton, Icons.arrow_back),
-    ));
-    expect(leftButton.onPressed, isNull);
-    // Maximize is enabled (enters read mode); minimize stays a disabled
-    // no-op in navigate mode.
+    // The navigate card carries a single quick button — the zoom/maximize
+    // control that enters read mode. The per-card nav arrows were removed (the
+    // map moves via arrow keys / tapping cells), so none are rendered.
+    final card = find.byWidget(selectedCard(tester));
+    expect(
+      find.descendant(of: card, matching: find.byType(IconButton)),
+      findsOneWidget,
+    );
     final maximize = tester.widget<IconButton>(find.descendant(
-      of: find.byWidget(selectedCard(tester)),
+      of: card,
       matching: find.widgetWithIcon(IconButton, Icons.open_in_full),
     ));
     expect(maximize.onPressed, isNotNull);
-    final minimize = tester.widget<IconButton>(find.descendant(
-      of: find.byWidget(selectedCard(tester)),
-      matching: find.widgetWithIcon(IconButton, Icons.close_fullscreen),
-    ));
-    expect(minimize.onPressed, isNull);
+    for (final icon in [
+      Icons.arrow_upward,
+      Icons.arrow_downward,
+      Icons.arrow_back,
+      Icons.arrow_forward,
+    ]) {
+      expect(
+        find.descendant(
+            of: card, matching: find.widgetWithIcon(IconButton, icon)),
+        findsNothing,
+      );
+    }
 
     await unmountApp(tester);
   });

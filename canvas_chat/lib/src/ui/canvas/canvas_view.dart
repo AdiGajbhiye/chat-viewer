@@ -198,10 +198,6 @@ class _CanvasViewState extends ConsumerState<CanvasView> {
                         cell: cell,
                         selected: cell.turn.id == _selectedId,
                         onMaximize: () => _openReadMode(cell.turn.id),
-                        onNavigate: (direction) {
-                          _select(layout, cell.turn.id);
-                          _navigate(layout, direction);
-                        },
                       ),
                     ),
                 ],

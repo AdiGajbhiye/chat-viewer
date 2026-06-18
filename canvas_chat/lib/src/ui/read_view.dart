@@ -94,7 +94,7 @@ class _ReadOverlayState extends ConsumerState<ReadOverlay> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              _ReadHeader(
+              ReadHeader(
                 title: graph.conversation.title,
                 cell: cell,
                 layout: layout,
@@ -169,8 +169,10 @@ class _ReadOverlayState extends ConsumerState<ReadOverlay> {
 /// card (DESIGN.md §6 "the quick-button strip stays on top"): a single zoom
 /// button minimizes back out of read mode (the navigate card's maximize), and
 /// the arrows move the *reading focus*.
-class _ReadHeader extends StatelessWidget {
-  const _ReadHeader({
+@visibleForTesting
+class ReadHeader extends StatelessWidget {
+  const ReadHeader({
+    super.key,
     required this.title,
     required this.cell,
     required this.layout,
@@ -208,31 +210,44 @@ class _ReadHeader extends StatelessWidget {
               onPressed: onMinimize,
             ),
             const SizedBox(width: 8),
+            // Title, breadcrumb, and counter all live inside one flexible
+            // region so the navigation arrows stay pinned to a fixed spot on
+            // the right — regardless of title length, counter width, or
+            // whether a branch breadcrumb is showing.
             Expanded(
-              child: Text(
-                title.isEmpty ? '(untitled)' : title,
-                style: theme.textTheme.titleMedium,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-            if (_breadcrumb() case final crumb?)
-              Flexible(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 8),
-                  child: Text(
-                    crumb,
-                    style: theme.textTheme.labelMedium
-                        ?.copyWith(color: theme.colorScheme.primary),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    softWrap: false,
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      title.isEmpty ? '(untitled)' : title,
+                      style: theme.textTheme.titleMedium,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
                   ),
-                ),
+                  if (_breadcrumb() case final crumb?)
+                    Flexible(
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                        child: Text(
+                          crumb,
+                          style: theme.textTheme.labelMedium
+                              ?.copyWith(color: theme.colorScheme.primary),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          softWrap: false,
+                        ),
+                      ),
+                    ),
+                  Padding(
+                    padding: const EdgeInsets.only(left: 8),
+                    child: Text(
+                      '${cell.row + 1} / ${layout.rowCount}',
+                      style: theme.textTheme.bodySmall,
+                    ),
+                  ),
+                ],
               ),
-            Text(
-              '${cell.row + 1} / ${layout.rowCount}',
-              style: theme.textTheme.bodySmall,
             ),
             const SizedBox(width: 4),
             IconButton(
