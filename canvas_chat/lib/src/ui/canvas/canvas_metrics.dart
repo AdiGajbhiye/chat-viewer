@@ -5,8 +5,8 @@ import '../../domain/grid_layout.dart';
 /// Fixed cell geometry for navigate mode (DESIGN.md §6): collapsed cards are
 /// uniform, so cell → pixel mapping is trivial and culling is exact.
 abstract final class CanvasMetrics {
-  static const double cardWidth = 260;
-  static const double cardHeight = 112;
+  static const double cardWidth = 320;
+  static const double cardHeight = 188;
 
   /// Horizontal gap between lanes / vertical gap between rows.
   static const double laneGap = 56;

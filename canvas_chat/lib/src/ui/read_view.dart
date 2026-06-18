@@ -187,69 +187,88 @@ class _ReadHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      child: Row(
-        children: [
-          IconButton(
-            tooltip: 'Minimize',
-            icon: const Icon(Icons.close_fullscreen),
-            onPressed: onMinimize,
-          ),
-          const IconButton(
-            tooltip: 'Maximize (read mode)',
-            icon: Icon(Icons.open_in_full),
-            onPressed: null,
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              title.isEmpty ? '(untitled)' : title,
-              style: theme.textTheme.titleMedium,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
+    // Compact icon buttons so the strip fits even when read mode fills a
+    // narrow canvas pane.
+    return IconButtonTheme(
+      data: IconButtonThemeData(
+        style: IconButton.styleFrom(
+          visualDensity: VisualDensity.compact,
+          padding: EdgeInsets.zero,
+          minimumSize: const Size(36, 36),
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        ),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        child: Row(
+          children: [
+            IconButton(
+              tooltip: 'Minimize',
+              icon: const Icon(Icons.close_fullscreen),
+              onPressed: onMinimize,
             ),
-          ),
-          if (_breadcrumb() case final crumb?)
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8),
+            const IconButton(
+              tooltip: 'Maximize (read mode)',
+              icon: Icon(Icons.open_in_full),
+              onPressed: null,
+            ),
+            const SizedBox(width: 8),
+            Expanded(
               child: Text(
-                crumb,
-                style: theme.textTheme.labelMedium
-                    ?.copyWith(color: theme.colorScheme.primary),
+                title.isEmpty ? '(untitled)' : title,
+                style: theme.textTheme.titleMedium,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
               ),
             ),
-          Text(
-            '${cell.row + 1} / ${layout.rowCount}',
-            style: theme.textTheme.bodySmall,
-          ),
-          const SizedBox(width: 4),
-          IconButton(
-            tooltip: 'Go up',
-            icon: const Icon(Icons.arrow_upward),
-            onPressed:
-                cell.up == null ? null : () => onNavigate(GridDirection.up),
-          ),
-          IconButton(
-            tooltip: 'Go down',
-            icon: const Icon(Icons.arrow_downward),
-            onPressed:
-                cell.down == null ? null : () => onNavigate(GridDirection.down),
-          ),
-          IconButton(
-            tooltip: 'Go left',
-            icon: const Icon(Icons.arrow_back),
-            onPressed:
-                cell.left == null ? null : () => onNavigate(GridDirection.left),
-          ),
-          IconButton(
-            tooltip: 'Go right',
-            icon: const Icon(Icons.arrow_forward),
-            onPressed: cell.right == null
-                ? null
-                : () => onNavigate(GridDirection.right),
-          ),
-        ],
+            if (_breadcrumb() case final crumb?)
+              Flexible(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  child: Text(
+                    crumb,
+                    style: theme.textTheme.labelMedium
+                        ?.copyWith(color: theme.colorScheme.primary),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    softWrap: false,
+                  ),
+                ),
+              ),
+            Text(
+              '${cell.row + 1} / ${layout.rowCount}',
+              style: theme.textTheme.bodySmall,
+            ),
+            const SizedBox(width: 4),
+            IconButton(
+              tooltip: 'Go up',
+              icon: const Icon(Icons.arrow_upward),
+              onPressed:
+                  cell.up == null ? null : () => onNavigate(GridDirection.up),
+            ),
+            IconButton(
+              tooltip: 'Go down',
+              icon: const Icon(Icons.arrow_downward),
+              onPressed: cell.down == null
+                  ? null
+                  : () => onNavigate(GridDirection.down),
+            ),
+            IconButton(
+              tooltip: 'Go left',
+              icon: const Icon(Icons.arrow_back),
+              onPressed: cell.left == null
+                  ? null
+                  : () => onNavigate(GridDirection.left),
+            ),
+            IconButton(
+              tooltip: 'Go right',
+              icon: const Icon(Icons.arrow_forward),
+              onPressed: cell.right == null
+                  ? null
+                  : () => onNavigate(GridDirection.right),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -463,21 +482,25 @@ class AssetBlock extends StatelessWidget {
 
 /// Navigate → read transition (DESIGN.md §6 "Rendering approach"): a route
 /// whose page grows hero-style from the tapped cell's on-screen rect to the
-/// read surface — the full screen on Android, a centered ~85% overlay over
-/// the dimmed canvas on macOS/desktop. The canvas underneath keeps its
-/// viewport.
+/// read surface — the full screen on Android, filling the canvas pane on
+/// macOS/desktop. The canvas underneath keeps its viewport.
 class ReadModeRoute<T> extends PopupRoute<T> {
   ReadModeRoute({
     required this.sourceRect,
     required this.fullScreen,
+    this.fillRect,
     required this.child,
   });
 
   /// Global on-screen rect of the cell the transition starts from.
   final Rect sourceRect;
 
-  /// Full-screen page (Android) vs centered overlay dialog (desktop).
+  /// Full-screen page (Android) vs an overlay filling [fillRect] (desktop).
   final bool fullScreen;
+
+  /// Desktop: the canvas pane's global rect the read surface grows to fill.
+  /// Null (or [fullScreen]) → the whole window.
+  final Rect? fillRect;
 
   final Widget child;
 
@@ -501,19 +524,16 @@ class ReadModeRoute<T> extends PopupRoute<T> {
   ) {
     return LayoutBuilder(builder: (context, constraints) {
       final size = constraints.biggest;
-      final targetRect = fullScreen
-          ? Offset.zero & size
-          : Rect.fromCenter(
-              center: size.center(Offset.zero),
-              width: size.width * 0.85,
-              height: size.height * 0.85,
-            );
+      final targetRect =
+          fullScreen ? Offset.zero & size : (fillRect ?? Offset.zero & size);
       return AnimatedBuilder(
         animation: animation,
         builder: (context, page) {
           final t = Curves.easeOutCubic.transform(animation.value);
           final rect = Rect.lerp(sourceRect, targetRect, t)!;
-          final radius = lerpDouble(12, fullScreen ? 0 : 16, t)!;
+          // The surface fills its region (window or canvas pane), so the
+          // rounded "card" corners flatten as it opens.
+          final radius = lerpDouble(12, 0, t)!;
           return Stack(
             children: [
               Positioned.fromRect(

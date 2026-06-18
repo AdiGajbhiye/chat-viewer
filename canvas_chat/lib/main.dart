@@ -44,6 +44,17 @@ class CanvasChatApp extends StatelessWidget {
     return MaterialApp(
       title: 'Canvas Chat',
       theme: ThemeData(useMaterial3: true, colorSchemeSeed: Colors.teal),
+      // Enforce a minimum 1.2x text scale for a larger, more readable UI,
+      // while still honoring a larger system text-scaling preference.
+      builder: (context, child) {
+        final mq = MediaQuery.of(context);
+        return MediaQuery(
+          data: mq.copyWith(
+            textScaler: mq.textScaler.clamp(minScaleFactor: 1.2),
+          ),
+          child: child!,
+        );
+      },
       home: const HomeScreen(),
     );
   }

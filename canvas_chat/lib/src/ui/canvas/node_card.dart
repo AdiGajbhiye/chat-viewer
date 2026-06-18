@@ -6,9 +6,10 @@ import '../../domain/grid_layout.dart';
 enum GridDirection { up, down, left, right }
 
 /// Collapsed turn card for navigate mode (DESIGN.md §6 "Node card & quick
-/// buttons"): quick-button strip, user query (max 2 lines), meta line with
-/// time · model · fork count. Uniform size — the parent positions it in a
-/// fixed [CanvasMetrics] cell.
+/// buttons"): quick-button strip, the user query filling the card, and a meta
+/// line with time · model · fork count. The assistant reply is shown only in
+/// read mode. Uniform size — the parent positions it in a fixed
+/// [CanvasMetrics] cell.
 class NodeCard extends StatelessWidget {
   const NodeCard({
     super.key,
@@ -55,7 +56,7 @@ class NodeCard extends StatelessWidget {
                 width: selected ? 2 : 1,
               ),
             ),
-            padding: const EdgeInsets.fromLTRB(10, 4, 10, 8),
+            padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -64,17 +65,21 @@ class NodeCard extends StatelessWidget {
                   onNavigate: onNavigate,
                   onMaximize: onMaximize,
                 ),
-                const SizedBox(height: 2),
+                const SizedBox(height: 4),
+                // The question fills the card (the assistant reply is read
+                // mode only — navigate mode stays a map of prompts).
                 Expanded(
                   child: Text(
                     cell.turn.promptMd.isEmpty
                         ? '(no prompt)'
                         : _collapseWhitespace(cell.turn.promptMd),
-                    maxLines: 2,
+                    maxLines: 5,
                     overflow: TextOverflow.ellipsis,
-                    style: theme.textTheme.bodyMedium,
+                    style: theme.textTheme.bodyMedium
+                        ?.copyWith(fontWeight: FontWeight.w500),
                   ),
                 ),
+                const SizedBox(height: 4),
                 Text(
                   _metaLine(context),
                   maxLines: 1,

@@ -16,14 +16,13 @@ import '../read_view.dart';
 import 'canvas_metrics.dart';
 import 'canvas_viewport.dart';
 import 'edge_painter.dart';
-import 'minimap.dart';
 import 'node_card.dart';
 
 /// Navigate mode (DESIGN.md §6): the conversation's turn tree on a
 /// pannable/zoomable grid canvas — uniform collapsed cards, edges with
-/// active-path emphasis, viewport culling, arrow-key/button selection, and a
-/// minimap. Tap / maximize enters read mode ([ReadOverlay] in a
-/// [ReadModeRoute]); mode, focused turn, and viewport are persisted per
+/// active-path emphasis, viewport culling, and arrow-key/button selection.
+/// Tap / maximize enters read mode ([ReadOverlay] in a [ReadModeRoute]) which
+/// fills the canvas pane; mode, focused turn, and viewport are persisted per
 /// conversation in `canvas_state` and restored on open.
 class CanvasView extends ConsumerStatefulWidget {
   const CanvasView({super.key, required this.conversationId});
@@ -210,16 +209,6 @@ class _CanvasViewState extends ConsumerState<CanvasView> {
             ),
           ),
         ),
-        Positioned(
-          right: 12,
-          bottom: 12,
-          child: Minimap(
-            layout: layout,
-            viewport: _viewport,
-            viewSize: _viewSize,
-            selectedId: _selectedId,
-          ),
-        ),
       ],
     );
   }
@@ -284,8 +273,9 @@ class _CanvasViewState extends ConsumerState<CanvasView> {
   }
 
   /// Enters read mode on [turnId] (DESIGN.md §6): hero-style transition from
-  /// the cell, full-screen route on Android, centered ~85% overlay on
-  /// desktop. Returns to navigate mode centered on the node just read.
+  /// the cell to the read surface — full-screen on Android, filling the
+  /// canvas pane on desktop. Returns to navigate mode centered on the node
+  /// just read.
   Future<void> _openReadMode(String turnId) async {
     if (_readOpen || !mounted) return;
     final layout = ref
@@ -305,9 +295,14 @@ class _CanvasViewState extends ConsumerState<CanvasView> {
     final topLeft = _viewport.toScreen(cellRect.topLeft);
     final sourceRect = (box?.localToGlobal(topLeft) ?? topLeft) &
         cellRect.size * _viewport.scale;
+    // The canvas pane's global rect: desktop read mode fills it rather than
+    // floating as a centered dialog.
+    final paneRect =
+        box == null ? null : box.localToGlobal(Offset.zero) & box.size;
 
     await Navigator.of(context).push(ReadModeRoute<void>(
       sourceRect: sourceRect,
+      fillRect: paneRect,
       fullScreen: defaultTargetPlatform == TargetPlatform.android,
       child: ReadOverlay(
         conversationId: widget.conversationId,

@@ -5,7 +5,6 @@ import 'package:canvas_chat/src/data/db/database.dart';
 import 'package:canvas_chat/src/data/import/chatgpt_importer.dart';
 import 'package:canvas_chat/src/data/import/export_source.dart';
 import 'package:canvas_chat/src/state/providers.dart';
-import 'package:canvas_chat/src/ui/canvas/minimap.dart';
 import 'package:canvas_chat/src/ui/canvas/node_card.dart';
 import 'package:canvas_chat/src/ui/read_view.dart';
 import 'package:drift/native.dart';
@@ -158,11 +157,11 @@ void main() {
     await tester.pumpAndSettle();
 
     // Canvas opens centered at 1:1 on the current turn ("edited v2", lane 0).
-    // The third lane ("edited v1") is off-screen — culled, not built.
+    // The root ("regenerate me", several rows up) and the third lane
+    // ("edited v1") are both off-screen — culled, not built.
     expect(find.byType(NodeCard), findsWidgets);
-    expect(find.byType(Minimap), findsOneWidget);
-    expect(find.textContaining('regenerate me'), findsOneWidget);
     expect(find.textContaining('edited v2'), findsOneWidget);
+    expect(find.textContaining('regenerate me'), findsNothing);
     expect(find.textContaining('edited v1'), findsNothing);
 
     // The selection starts on the conversation's current turn.
@@ -173,6 +172,7 @@ void main() {
     await tester.sendKeyEvent(LogicalKeyboardKey.keyF);
     await tester.pumpAndSettle();
     expect(find.byType(NodeCard), findsNWidgets(6));
+    expect(find.textContaining('regenerate me'), findsOneWidget);
     expect(find.textContaining('edited v1'), findsOneWidget);
     expect(find.textContaining('follow up'), findsOneWidget);
     expect(find.text('(no prompt)'), findsNWidgets(2));
@@ -251,8 +251,7 @@ void main() {
     await unmountApp(tester);
   });
 
-  testWidgets('tall conversations are viewport-culled; minimap taps jump',
-      (tester) async {
+  testWidgets('tall conversations are viewport-culled', (tester) async {
     await seed(tester, conversations: [longConversation()]);
     await tester.pumpWidget(app());
     await tester.pumpAndSettle();
@@ -268,13 +267,11 @@ void main() {
     expect(find.textContaining('question 39'), findsOneWidget);
     expect(find.textContaining('question 0'), findsNothing);
 
-    // Tapping near the top of the minimap jumps the viewport to the top.
-    final minimapRect = tester.getRect(find.byType(Minimap));
-    await tester.tapAt(minimapRect.topLeft + const Offset(4, 4));
-    await tester.pump(const Duration(milliseconds: 350));
+    // Panning up with `f` (fit) brings the whole chat into view, so the first
+    // turn is no longer culled.
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyF);
     await tester.pumpAndSettle();
     expect(find.textContaining('question 0'), findsOneWidget);
-    expect(find.textContaining('question 39'), findsNothing);
 
     await unmountApp(tester);
   });
@@ -301,7 +298,7 @@ void main() {
       await tester.pumpAndSettle();
     }
 
-    testWidgets('maximize opens a centered overlay and persists read mode',
+    testWidgets('maximize fills the canvas pane and persists read mode',
         (tester) async {
       // Widget tests default to TargetPlatform.android; this test exercises
       // the desktop presentation. Reset inline: the binding's end-of-test
@@ -312,10 +309,11 @@ void main() {
 
         await tapSelectedCardButton(tester, 'Maximize (read mode)');
 
-        // Desktop presentation: centered ~85% overlay (800×600 → 680×510)
+        // Desktop presentation: the read surface fills the canvas pane
+        // (sidebar 320 + divider 1 → x ∈ [321, 800], y ∈ [0, 600] = 479×600)
         // over the still-mounted canvas.
         expect(find.byType(ReadOverlay), findsOneWidget);
-        expect(tester.getSize(find.byType(ReadOverlay)), const Size(680, 510));
+        expect(tester.getSize(find.byType(ReadOverlay)), const Size(479, 600));
         expect(find.byType(NodeCard), findsWidgets);
         expect(
           inOverlay(find.textContaining('edited v2', findRichText: true)),
