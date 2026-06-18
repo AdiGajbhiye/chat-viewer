@@ -36,14 +36,20 @@ Future<void> main() async {
   );
 }
 
-class CanvasChatApp extends StatelessWidget {
+class CanvasChatApp extends ConsumerWidget {
   const CanvasChatApp({super.key});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     return MaterialApp(
       title: 'Canvas Chat',
       theme: ThemeData(useMaterial3: true, colorSchemeSeed: Colors.teal),
+      darkTheme: ThemeData(
+        useMaterial3: true,
+        colorSchemeSeed: Colors.teal,
+        brightness: Brightness.dark,
+      ),
+      themeMode: ref.watch(themeModeProvider),
       // Enforce a minimum 1.2x text scale for a larger, more readable UI,
       // while still honoring a larger system text-scaling preference.
       builder: (context, child) {

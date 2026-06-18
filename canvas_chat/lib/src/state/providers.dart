@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:drift/drift.dart';
 import 'package:flutter/widgets.dart' show FocusNode;
+import 'package:flutter/material.dart' show Brightness, ThemeMode;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../data/db/database.dart';
@@ -81,6 +82,27 @@ final turnAssetsProvider =
   return (db.select(db.turnAssets)..where((a) => a.turnId.equals(turnId)))
       .get();
 });
+
+/// Light / dark / system theme selection. Defaults to following the OS;
+/// the sidebar toggle flips it to an explicit light or dark mode.
+final themeModeProvider =
+    NotifierProvider<ThemeModeNotifier, ThemeMode>(ThemeModeNotifier.new);
+
+class ThemeModeNotifier extends Notifier<ThemeMode> {
+  @override
+  ThemeMode build() => ThemeMode.system;
+
+  /// Flip to the opposite of what's currently on screen. [platformBrightness]
+  /// is the OS brightness, used to resolve [ThemeMode.system] before flipping.
+  void toggle(Brightness platformBrightness) {
+    final isDark = switch (state) {
+      ThemeMode.dark => true,
+      ThemeMode.light => false,
+      ThemeMode.system => platformBrightness == Brightness.dark,
+    };
+    state = isDark ? ThemeMode.light : ThemeMode.dark;
+  }
+}
 
 /// Conversation selected in the sidebar; null = nothing selected.
 final selectedConversationIdProvider =

@@ -59,6 +59,7 @@ class ConversationListPane extends ConsumerWidget {
                   style: Theme.of(context).textTheme.titleMedium,
                 ),
               ),
+              const _ThemeToggleButton(),
               const ImportMenuButton(),
             ],
           ),
@@ -148,9 +149,12 @@ class _ConversationList extends ConsumerWidget {
       itemCount: conversations.length,
       itemBuilder: (context, index) {
         final conversation = conversations[index];
+        final colors = Theme.of(context).colorScheme;
         return ListTile(
           dense: true,
           selected: conversation.id == selectedId,
+          selectedTileColor: colors.secondaryContainer,
+          selectedColor: colors.onSecondaryContainer,
           title: Text(
             conversation.title.isEmpty ? '(untitled)' : conversation.title,
             maxLines: 1,
@@ -169,6 +173,24 @@ class _ConversationList extends ConsumerWidget {
     if (millis == null) return '';
     return MaterialLocalizations.of(context)
         .formatShortDate(DateTime.fromMillisecondsSinceEpoch(millis));
+  }
+}
+
+/// Flips between light and dark themes (DESIGN.md §6 sidebar). Shows a moon
+/// while light, a sun while dark — i.e. the mode a tap would switch to.
+class _ThemeToggleButton extends ConsumerWidget {
+  const _ThemeToggleButton();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return IconButton(
+      tooltip: isDark ? 'Switch to light theme' : 'Switch to dark theme',
+      icon: Icon(isDark ? Icons.light_mode_outlined : Icons.dark_mode_outlined),
+      onPressed: () => ref
+          .read(themeModeProvider.notifier)
+          .toggle(MediaQuery.platformBrightnessOf(context)),
+    );
   }
 }
 
