@@ -9,10 +9,12 @@ import 'package:canvas_chat/src/ui/canvas/node_card.dart';
 import 'package:canvas_chat/src/ui/read_view.dart';
 import 'package:drift/native.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:gpt_markdown/gpt_markdown.dart';
 
 import 'helpers/synthetic_export.dart';
 
@@ -335,6 +337,30 @@ void main() {
       }
     });
 
+    testWidgets('read-mode markdown carries an explicit onSurface color',
+        (tester) async {
+      // GptMarkdown body text does not inherit the ambient DefaultTextStyle's
+      // color, so in dark mode it renders near-black and vanishes on the dark
+      // read surface unless we pass an explicit style. Guard that we do.
+      tester.platformDispatcher.platformBrightnessTestValue = Brightness.dark;
+      addTearDown(tester.platformDispatcher.clearPlatformBrightnessTestValue);
+      await openForkedChat(tester);
+      await tapSelectedCardButton(tester, 'Maximize (read mode)');
+
+      final onSurface = Theme.of(tester.element(find.byType(ReadOverlay)))
+          .colorScheme
+          .onSurface;
+      final markdowns = tester.widgetList<GptMarkdown>(
+        inOverlay(find.byType(GptMarkdown)),
+      );
+      expect(markdowns, isNotEmpty);
+      for (final md in markdowns) {
+        expect(md.style?.color, onSurface);
+      }
+
+      await unmountApp(tester);
+    });
+
     testWidgets('tap opens read mode; arrows traverse; minimize recenters',
         (tester) async {
       await openForkedChat(tester);
@@ -392,6 +418,29 @@ void main() {
       final state = await readState(tester, 'conv-forked');
       expect(state?.mode, 'navigate');
       expect(state?.focusedTurnId, 'conv-forked:f-a1');
+
+      await unmountApp(tester);
+    });
+
+    testWidgets('a mouse click that drifts a few px still maximizes',
+        (tester) async {
+      await openForkedChat(tester);
+
+      // A real desktop click rarely lands pixel-perfect. With a mouse the
+      // canvas pan slop is only kPrecisePointerPanSlop (2px), so a click that
+      // drifts a few pixels used to read as a pan and the card's maximize tap
+      // was swallowed — the node never opened. The drift here (≈5.7px) is past
+      // that 2px but well under kTouchSlop (18), so it must still be a tap.
+      final gesture = await tester.startGesture(
+        tester.getCenter(find.textContaining('edited v2')),
+        kind: PointerDeviceKind.mouse,
+      );
+      await gesture.moveBy(const Offset(4, 4));
+      await gesture.up();
+      await tester.pump(const Duration(milliseconds: 350));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(ReadOverlay), findsOneWidget);
 
       await unmountApp(tester);
     });

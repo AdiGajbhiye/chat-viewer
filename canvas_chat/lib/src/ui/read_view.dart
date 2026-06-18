@@ -332,7 +332,12 @@ class _TurnBody extends ConsumerWidget {
             title: Text('Reasoning', style: theme.textTheme.labelLarge),
             childrenPadding: const EdgeInsets.only(bottom: 16),
             expandedCrossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [GptMarkdown(thoughts)],
+            children: [
+              GptMarkdown(
+                thoughts,
+                style: TextStyle(color: theme.colorScheme.onSurface),
+              ),
+            ],
           ),
         Text(
           turn.modelSlug == null ? 'Assistant' : 'Assistant · ${turn.modelSlug}',
@@ -371,16 +376,23 @@ class _MarkdownWithAssets extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // GptMarkdown's body spans don't inherit the ambient DefaultTextStyle's
+    // color, so without an explicit style they render with a light-theme
+    // (near-black) default — invisible on the dark read surface. Pin the color
+    // to onSurface so the transcript is legible in both themes.
+    final style = TextStyle(color: Theme.of(context).colorScheme.onSurface);
     final children = <Widget>[];
     var start = 0;
     for (final match in _assetMarker.allMatches(markdown)) {
       final before = markdown.substring(start, match.start).trim();
-      if (before.isNotEmpty) children.add(GptMarkdown(before));
+      if (before.isNotEmpty) children.add(GptMarkdown(before, style: style));
       children.add(AssetBlock(asset: assetsByPointer?[match.group(1)!]));
       start = match.end;
     }
     final tail = markdown.substring(start).trim();
-    if (tail.isNotEmpty || children.isEmpty) children.add(GptMarkdown(tail));
+    if (tail.isNotEmpty || children.isEmpty) {
+      children.add(GptMarkdown(tail, style: style));
+    }
     if (children.length == 1) return children.single;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,

@@ -141,24 +141,43 @@ class _CanvasViewState extends ConsumerState<CanvasView> {
                 autofocus: true,
                 child: Listener(
                   onPointerSignal: _onPointerSignal,
-                  child: GestureDetector(
+                  // RawGestureDetector (not GestureDetector) so the canvas
+                  // pan/zoom uses [_PanZoomGestureRecognizer], which yields the
+                  // arena to a card's tap unless the gesture is a real drag —
+                  // a plain scale recognizer steals a slightly-imprecise mouse
+                  // click before it can maximize the node.
+                  child: RawGestureDetector(
                     behavior: HitTestBehavior.opaque,
-                    onScaleStart: (details) {
-                      _lastFocal = details.localFocalPoint;
-                      _lastGestureScale = 1;
+                    gestures: {
+                      _PanZoomGestureRecognizer:
+                          GestureRecognizerFactoryWithHandlers<
+                              _PanZoomGestureRecognizer>(
+                        () => _PanZoomGestureRecognizer(debugOwner: this),
+                        (instance) => instance
+                          ..onStart = (details) {
+                            _lastFocal = details.localFocalPoint;
+                            _lastGestureScale = 1;
+                          }
+                          ..onUpdate = (details) {
+                            _viewport
+                                .panBy(details.localFocalPoint - _lastFocal);
+                            _lastFocal = details.localFocalPoint;
+                            if (details.scale != _lastGestureScale) {
+                              _viewport.zoomAt(
+                                details.localFocalPoint,
+                                details.scale / _lastGestureScale,
+                              );
+                              _lastGestureScale = details.scale;
+                            }
+                          },
+                      ),
+                      DoubleTapGestureRecognizer:
+                          GestureRecognizerFactoryWithHandlers<
+                              DoubleTapGestureRecognizer>(
+                        () => DoubleTapGestureRecognizer(debugOwner: this),
+                        (instance) => instance.onDoubleTap = () => _fit(layout),
+                      ),
                     },
-                    onScaleUpdate: (details) {
-                      _viewport.panBy(details.localFocalPoint - _lastFocal);
-                      _lastFocal = details.localFocalPoint;
-                      if (details.scale != _lastGestureScale) {
-                        _viewport.zoomAt(
-                          details.localFocalPoint,
-                          details.scale / _lastGestureScale,
-                        );
-                        _lastGestureScale = details.scale;
-                      }
-                    },
-                    onDoubleTap: () => _fit(layout),
                     child: ClipRect(
                       child: ListenableBuilder(
                         listenable: _viewport,
@@ -597,6 +616,55 @@ class CanvasSearchBar extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+/// The canvas's pan/zoom recognizer, tuned so it doesn't swallow a tap meant
+/// for the node card beneath it. A plain [ScaleGestureRecognizer] claims the
+/// gesture arena the instant a pointer drifts past the slop — only ~2px for a
+/// mouse ([kPrecisePointerPanSlop]) — so a slightly-imprecise desktop click
+/// reads as a pan and the card's "maximize" tap never fires. This subclass
+/// withholds the single-pointer "accept" until the drag passes [kTouchSlop]
+/// (the same tolerance the tap recognizer tolerates, so there is no gap where
+/// neither wins), letting a click fall through to the card while a deliberate
+/// drag still pans. Multi-pointer pinch and arena rejections are untouched.
+class _PanZoomGestureRecognizer extends ScaleGestureRecognizer {
+  _PanZoomGestureRecognizer({super.debugOwner});
+
+  Offset? _origin;
+  bool _passedSlop = false;
+
+  @override
+  void addAllowedPointer(PointerDownEvent event) {
+    _origin = event.position;
+    _passedSlop = false;
+    super.addAllowedPointer(event);
+  }
+
+  @override
+  void handleEvent(PointerEvent event) {
+    if (!_passedSlop &&
+        pointerCount <= 1 &&
+        event is PointerMoveEvent &&
+        _origin != null &&
+        (event.position - _origin!).distance > kTouchSlop) {
+      _passedSlop = true;
+    }
+    super.handleEvent(event);
+  }
+
+  @override
+  void resolve(GestureDisposition disposition) {
+    // Hold off claiming the arena from a card's tap while a single pointer has
+    // barely moved; a real drag (past the slop) and multi-pointer pinch accept
+    // as usual, and rejections always pass through so the recognizer steps out
+    // of the arena on a clean tap.
+    if (disposition == GestureDisposition.accepted &&
+        pointerCount <= 1 &&
+        !_passedSlop) {
+      return;
+    }
+    super.resolve(disposition);
   }
 }
 
