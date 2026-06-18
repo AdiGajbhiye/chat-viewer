@@ -35,6 +35,19 @@ class PairedTurn {
   /// The original mapping nodes absorbed by this turn, in chain order, for
   /// lossless re-derivation (`raw_json` column).
   final List<Map<String, dynamic>> rawNodes;
+
+  PairedTurn copyWith({String? promptMd, List<TurnAssetRef>? assets}) =>
+      PairedTurn(
+        id: id,
+        parentTurnId: parentTurnId,
+        promptMd: promptMd ?? this.promptMd,
+        responseMd: responseMd,
+        thoughtsMd: thoughtsMd,
+        modelSlug: modelSlug,
+        createTime: createTime,
+        assets: assets ?? this.assets,
+        rawNodes: rawNodes,
+      );
 }
 
 /// Reference to an asset (image upload/generation) used by a turn.

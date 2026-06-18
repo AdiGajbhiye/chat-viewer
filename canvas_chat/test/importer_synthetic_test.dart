@@ -57,12 +57,13 @@ void main() {
 
     test('imports all conversations and turns', () async {
       expect(result.conversations, 3);
-      expect(result.turns, 3 + 6 + 1);
+      // Forked conv folds its regen prompt away: 3 (linear) + 5 (forked) + 1.
+      expect(result.turns, 3 + 5 + 1);
       expect(result.messages, 8 + 6 + 3);
       final convRows = await db.select(db.conversations).get();
       expect(convRows, hasLength(3));
       final turnRows = await db.select(db.turns).get();
-      expect(turnRows, hasLength(10));
+      expect(turnRows, hasLength(9));
     });
 
     test('conversation metadata lands in the row', () async {
@@ -125,9 +126,9 @@ void main() {
       final (_, second) =
           await import(DirectoryExportSource(exportDir), db: db);
       expect(second.conversations, 3);
-      expect(second.turns, 10);
+      expect(second.turns, 9);
       expect(await db.select(db.conversations).get(), hasLength(3));
-      expect(await db.select(db.turns).get(), hasLength(10));
+      expect(await db.select(db.turns).get(), hasLength(9));
       // No duplicated asset rows either.
       expect(await db.select(db.turnAssets).get(), hasLength(2));
       // FTS stays in sync through the delete+reinsert cycle.
@@ -161,7 +162,7 @@ void main() {
       final (db, result) = await import(await ExportSource.open(zip.path));
       addTearDown(db.close);
       expect(result.conversations, 3);
-      expect(result.turns, 10);
+      expect(result.turns, 9);
       expect(result.assetsCopied, 1);
       expect(result.assetsMissing, 1);
     });
@@ -171,7 +172,7 @@ void main() {
       final (db, result) = await import(await ZipExportSource.open(zip));
       addTearDown(db.close);
       expect(result.conversations, 3);
-      expect(result.turns, 10);
+      expect(result.turns, 9);
       expect(result.assetsCopied, 1);
     });
   });

@@ -3,9 +3,10 @@ import 'package:flutter/material.dart';
 import '../../domain/grid_layout.dart';
 import 'canvas_metrics.dart';
 
-/// Paints all parent→child edges in one painter below the node layer
-/// (DESIGN.md §6): vertical line within a lane, rounded elbow into the
-/// fork's lane. Active-path edges emphasized, others dimmed.
+/// Paints all edges in one painter below the node layer (DESIGN.md §6):
+/// parent→child edges are vertical within a lane; sibling edges are
+/// horizontal across a row between fork alternatives. Active-path edges
+/// emphasized, others dimmed.
 class EdgePainter extends CustomPainter {
   EdgePainter({
     required this.layout,
@@ -37,16 +38,22 @@ class EdgePainter extends CustomPainter {
     final cullRect = visibleRect.inflate(CanvasMetrics.rowGap);
 
     for (final edge in layout.edges) {
-      final parent = layout.byId[edge.from];
-      final child = layout.byId[edge.to];
-      if (parent == null || child == null) continue;
-      final from = CanvasMetrics.cellRect(parent).bottomCenter;
-      final to = CanvasMetrics.cellRect(child).topCenter;
+      final a = layout.byId[edge.from];
+      final b = layout.byId[edge.to];
+      if (a == null || b == null) continue;
+      final paint = edge.active ? activePaint : dimPaint;
+      if (edge.kind == GridEdgeKind.sibling) {
+        // Horizontal connector between fork alternatives on the same row.
+        final from = CanvasMetrics.cellRect(a).centerRight;
+        final to = CanvasMetrics.cellRect(b).centerLeft;
+        if (!cullRect.overlaps(Rect.fromPoints(from, to))) continue;
+        canvas.drawLine(from, to, paint);
+        continue;
+      }
+      final from = CanvasMetrics.cellRect(a).bottomCenter;
+      final to = CanvasMetrics.cellRect(b).topCenter;
       if (!cullRect.overlaps(Rect.fromPoints(from, to))) continue;
-      canvas.drawPath(
-        _edgePath(from, to),
-        edge.active ? activePaint : dimPaint,
-      );
+      canvas.drawPath(_edgePath(from, to), paint);
     }
   }
 

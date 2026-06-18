@@ -126,11 +126,16 @@ The export is a tree of *messages*; the canvas wants a tree of *turns*.
    as collapsible extras; the final `text`/`multimodal_text` message is the
    turn's response).
 3. The next `user` descendant starts a child turn.
-4. A message node with N>1 children produces N child turns → a fork.
-   Forks can occur mid-turn (regenerated response) or at the prompt
-   (edited prompt); both render the same way: multiple outgoing edges.
+4. Forks. A node with N>1 *response* (assistant) children is a regenerated
+   response: the prompt is folded into each branch, yielding N complete
+   sibling turns (same prompt, differing response) that share the prompt's
+   parent — no prompt-only or response-only cells. A node with N>1 *user*
+   children is an edited prompt: each child already pairs into a full turn,
+   and they become siblings. Either way the alternatives are siblings,
+   drawn side by side and joined by a horizontal sibling edge (§6).
 5. Degenerate cases: leading system/blank nodes are skipped; an assistant
-   message with no user parent (rare) becomes a turn with an empty prompt.
+   message with no user parent (rare) becomes a one-sided turn with an empty
+   prompt — these genuine one-sided cells are rendered as-is.
 
 The pairing is deterministic and recomputable, so we persist *turns* and can
 re-derive them from raw data if the algorithm improves (see `raw_json` below).
@@ -246,8 +251,10 @@ fixed grid — no free-form positioning, no force-directed layout:
 - Collapsed nodes are **uniform size** (fixed width × height), so cell → pixel
   mapping is trivial and layout is a pure function of the tree: deterministic,
   recomputed on open, never persisted.
-- Edges: vertical line within a lane; rounded elbow into the fork's lane.
-  Active path emphasized, other lanes dimmed.
+- Edges: a vertical line within a lane connects a turn to the child that
+  continues it; a horizontal sibling edge across a row joins a fork's
+  alternatives (the vertical edge runs only into the active branch). Active
+  path emphasized, other lanes dimmed.
 
 The grid also gives navigation exact semantics: **above/below** = parent/child
 in the same lane (following the edge), **left/right** = the node in the

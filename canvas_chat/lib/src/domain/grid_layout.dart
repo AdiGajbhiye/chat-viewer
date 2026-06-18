@@ -67,17 +67,31 @@ class GridCell {
   String? up, down, left, right;
 }
 
-class GridEdge {
-  GridEdge({required this.from, required this.to, required this.active});
+/// Edge geometry kind (DESIGN.md §6): a [parentChild] edge runs vertically
+/// down a lane into the branch's continuation; a [sibling] edge runs
+/// horizontally across a row between fork alternatives.
+enum GridEdgeKind { parentChild, sibling }
 
-  /// Parent cell's turn id.
+class GridEdge {
+  GridEdge({
+    required this.from,
+    required this.to,
+    required this.active,
+    this.kind = GridEdgeKind.parentChild,
+  });
+
+  /// Source cell's turn id (the parent for [parentChild]; the left sibling
+  /// for [sibling]).
   final String from;
 
-  /// Child cell's turn id.
+  /// Target cell's turn id (the child for [parentChild]; the right sibling
+  /// for [sibling]).
   final String to;
 
   /// True when both endpoints are on the active path (emphasized edge).
   final bool active;
+
+  final GridEdgeKind kind;
 }
 
 TurnGridLayout computeGridLayout(List<Turn> turns, String? currentTurnId) {
@@ -175,8 +189,10 @@ TurnGridLayout computeGridLayout(List<Turn> turns, String? currentTurnId) {
     return chain;
   }
 
-  // Pending branches: (start turn, start row, first lane to try). FIFO in
-  // discovery order so forks near the top claim the near lanes.
+  // Pending branches: (start turn, start row, first lane to try). Processed
+  // smallest-startRow first so forks near the top claim the near lanes —
+  // which keeps a fork's siblings (e.g. regenerated responses at the root)
+  // in adjacent lanes even when a deeper branch was discovered first.
   final pending = <(Turn, int, int)>[];
 
   void enqueueBranches(List<Turn> chain, int startRow, int lane) {
@@ -203,9 +219,14 @@ TurnGridLayout computeGridLayout(List<Turn> turns, String? currentTurnId) {
     }
   }
 
-  // 3. Place pending branches, breadth-first in discovery order.
+  // 3. Place pending branches, topmost (smallest startRow) first so a fork's
+  // branches settle into adjacent lanes before deeper branches grab them.
   while (pending.isNotEmpty) {
-    final (start, startRow, fromLane) = pending.removeAt(0);
+    var pick = 0;
+    for (var i = 1; i < pending.length; i++) {
+      if (pending[i].$2 < pending[pick].$2) pick = i;
+    }
+    final (start, startRow, fromLane) = pending.removeAt(pick);
     if (cellById.containsKey(start.id)) continue;
     final chain = chainFrom(start);
     var lane = fromLane;
@@ -224,17 +245,42 @@ TurnGridLayout computeGridLayout(List<Turn> turns, String? currentTurnId) {
     }
   }
 
-  // Edges: parent → child for every placed pair.
+  // Edges (DESIGN.md §6): a vertical parent→child edge into the in-lane
+  // continuation; horizontal sibling edges chaining a fork's alternatives
+  // across their shared row. Fork branches are connected to each other (and
+  // to the continuation) by sibling edges, not by a parent→child elbow.
   final edges = <GridEdge>[];
+  // Group placed cells by parent (key null groups roots — themselves
+  // alternative starts, hence siblings).
+  final siblingGroups = <String?, List<GridCell>>{};
   for (final cell in cells) {
+    (siblingGroups[cell.turn.parentTurnId] ??= []).add(cell);
+
+    // Vertical edge only for the child continuing the parent's lane.
     final parentId = cell.turn.parentTurnId;
     final parent = parentId == null ? null : cellById[parentId];
-    if (parent == null) continue;
-    edges.add(GridEdge(
-      from: parent.turn.id,
-      to: cell.turn.id,
-      active: parent.onActivePath && cell.onActivePath,
-    ));
+    if (parent != null && cell.lane == parent.lane) {
+      edges.add(GridEdge(
+        from: parent.turn.id,
+        to: cell.turn.id,
+        active: parent.onActivePath && cell.onActivePath,
+      ));
+    }
+  }
+  // Horizontal edges between adjacent (by lane) siblings on the same row.
+  for (final group in siblingGroups.values) {
+    if (group.length < 2) continue;
+    group.sort((a, b) => a.lane.compareTo(b.lane));
+    for (var i = 0; i + 1 < group.length; i++) {
+      final a = group[i];
+      final b = group[i + 1];
+      edges.add(GridEdge(
+        from: a.turn.id,
+        to: b.turn.id,
+        active: a.onActivePath && b.onActivePath,
+        kind: GridEdgeKind.sibling,
+      ));
+    }
   }
 
   // Neighbors. Lanes are contiguous (a lane is only ever claimed after the

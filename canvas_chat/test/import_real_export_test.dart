@@ -56,9 +56,12 @@ void main() {
       1594,
     );
     expect(await db.turns.count().getSingle(), result.turns);
-    // 5,918 user messages each start a turn; prompt-less turns
-    // (regenerations, assistant-first chains) account for the rest.
-    expect(result.turns, 6075);
+    // Each user message starts a turn; regenerated-response branches fold the
+    // shared prompt in (one full turn per branch — the prompt node dissolved,
+    // and a prompt+response split by a transparent sibling merged back into
+    // one cell). 79 fewer turns than the old prompt-then-responses shape; the
+    // remaining one-sided cells are genuine orphans / trailing prompts.
+    expect(result.turns, 5996);
   });
 
   test('progress was streamed once per conversation', () {
@@ -79,7 +82,7 @@ void main() {
       "SELECT COUNT(*) AS c FROM turns WHERE prompt_md LIKE '%](asset://%' "
       "OR response_md LIKE '%](asset://%'",
     ).getSingle();
-    expect(imageTurns.read<int>('c'), 46);
+    expect(imageTurns.read<int>('c'), 50);
 
     final plainText = await db.customSelect(
       "SELECT COUNT(*) AS c FROM turns WHERE prompt_md != '' "
@@ -88,13 +91,17 @@ void main() {
     expect(plainText.read<int>('c'), greaterThan(4000));
   });
 
-  test('forks produce multiple child turns', () async {
+  test('forks produce multiple sibling turns', () async {
+    // Parents with >1 child: edited-prompt forks, plus regenerated-response
+    // forks whose dissolved prompt had a (non-root) parent. Fewer than before
+    // the fold (258) because regen-at-root branches become sibling roots and
+    // single-response forks collapse into one cell.
     final forks = await db.customSelect(
       'SELECT parent_turn_id, COUNT(*) AS c FROM turns '
       'WHERE parent_turn_id IS NOT NULL '
       'GROUP BY parent_turn_id HAVING c > 1',
     ).get();
-    expect(forks, hasLength(258));
+    expect(forks, hasLength(222));
   });
 
   test('assets are resolved, copied, and renamed', () async {
@@ -103,9 +110,10 @@ void main() {
     expect(result.assetsCopied, 45);
     expect(result.assetsMissing, 3);
 
-    // 49 `image_asset_pointer` occurrences (one pointer is referenced twice).
+    // 53 turn-asset rows: 49 `image_asset_pointer` occurrences plus prompt
+    // images duplicated into regenerated-response branches by the fold.
     final rows = await db.select(db.turnAssets).get();
-    expect(rows, hasLength(49));
+    expect(rows, hasLength(53));
     for (final row in rows.where((r) => r.path.isNotEmpty)) {
       expect(File(row.path).existsSync(), isTrue, reason: row.path);
       expect(p.extension(row.path), isNot('.dat'),

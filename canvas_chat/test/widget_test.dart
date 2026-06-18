@@ -157,29 +157,28 @@ void main() {
     await tester.pumpAndSettle();
 
     // Canvas opens centered at 1:1 on the current turn ("edited v2", lane 0).
-    // The root ("regenerate me", several rows up) and the third lane
-    // ("edited v1") are both off-screen — culled, not built.
+    // The right-hand lanes ("edited v1", "follow up") are off-screen — culled.
     expect(find.byType(NodeCard), findsWidgets);
     expect(find.textContaining('edited v2'), findsOneWidget);
-    expect(find.textContaining('regenerate me'), findsNothing);
     expect(find.textContaining('edited v1'), findsNothing);
+    expect(find.textContaining('follow up'), findsNothing);
 
     // The selection starts on the conversation's current turn.
     expect(selectedCard(tester).cell.turn.id, 'conv-forked:f-u3b');
 
-    // `f` fits the whole graph: all 6 turns visible (2 turns from the
-    // regeneration fork have no prompt).
+    // `f` fits the whole graph: all 5 folded turns visible. The regen prompt
+    // is duplicated into both branches; no prompt-only/response-only cells.
     await tester.sendKeyEvent(LogicalKeyboardKey.keyF);
     await tester.pumpAndSettle();
-    expect(find.byType(NodeCard), findsNWidgets(6));
-    expect(find.textContaining('regenerate me'), findsOneWidget);
+    expect(find.byType(NodeCard), findsNWidgets(5));
+    expect(find.textContaining('regenerate me'), findsNWidgets(2));
     expect(find.textContaining('edited v1'), findsOneWidget);
     expect(find.textContaining('follow up'), findsOneWidget);
-    expect(find.text('(no prompt)'), findsNWidgets(2));
+    expect(find.text('(no prompt)'), findsNothing);
 
-    // Fork parents carry the ⑂ badge: "regenerate me" (2 responses) and the
-    // regenerated answer (2 edited prompts).
-    expect(find.textContaining('⑂ 2'), findsNWidgets(2));
+    // The edited-prompt fork parent ("second answer") still carries a ⑂ badge;
+    // the regen fork is now shown by the sibling edge, not a child-count badge.
+    expect(find.textContaining('⑂ 2'), findsNWidgets(1));
 
     await unmountApp(tester);
   });
@@ -423,13 +422,14 @@ void main() {
         (tester) async {
       await openForkedChat(tester);
 
-      // Fit the whole graph and move the selection to the root prompt.
+      // Fit the whole graph and move the selection up to the root turn (the
+      // folded regen branch on the active path; a second ↑ has no parent).
       await tester.sendKeyEvent(LogicalKeyboardKey.keyF);
       await tester.pumpAndSettle();
       await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
       await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
       await tester.pumpAndSettle();
-      expect(selectedCard(tester).cell.turn.id, 'conv-forked:f-u1');
+      expect(selectedCard(tester).cell.turn.id, 'conv-forked:f-a2');
       // Let the debounced viewport write flush.
       await tester.pump(const Duration(milliseconds: 350));
 
@@ -439,10 +439,10 @@ void main() {
 
       await tester.tap(find.text('Forked chat'));
       await tester.pumpAndSettle();
-      // Selection and the fitted viewport are restored: all 6 cells visible
+      // Selection and the fitted viewport are restored: all 5 cells visible
       // (the default open would be 1:1 on the current turn, culling lanes).
-      expect(selectedCard(tester).cell.turn.id, 'conv-forked:f-u1');
-      expect(find.byType(NodeCard), findsNWidgets(6));
+      expect(selectedCard(tester).cell.turn.id, 'conv-forked:f-a2');
+      expect(find.byType(NodeCard), findsNWidgets(5));
       expect(find.textContaining('edited v1'), findsOneWidget);
 
       await unmountApp(tester);

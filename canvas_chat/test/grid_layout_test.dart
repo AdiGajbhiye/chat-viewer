@@ -59,12 +59,19 @@ void main() {
     expect(cellOf(layout, 'old-child'), (2, 1));
     expect(layout.laneCount, 2);
 
-    final edgeRootOld =
-        layout.edges.singleWhere((e) => e.from == 'root' && e.to == 'old');
-    expect(edgeRootOld.active, isFalse);
-    final edgeRootNew =
-        layout.edges.singleWhere((e) => e.from == 'root' && e.to == 'new');
+    // root continues into the active branch (new) with a vertical edge.
+    final edgeRootNew = layout.edges.singleWhere((e) =>
+        e.from == 'root' &&
+        e.to == 'new' &&
+        e.kind == GridEdgeKind.parentChild);
     expect(edgeRootNew.active, isTrue);
+    // The other branch (old) is reached by a horizontal sibling edge, not a
+    // parent→child edge from root.
+    expect(layout.edges.any((e) => e.from == 'root' && e.to == 'old'), isFalse);
+    final sibling =
+        layout.edges.singleWhere((e) => e.kind == GridEdgeKind.sibling);
+    expect((sibling.from, sibling.to), ('new', 'old'));
+    expect(sibling.active, isFalse);
   });
 
   test('non-overlapping branches reuse lane 1; overlapping ones move right',

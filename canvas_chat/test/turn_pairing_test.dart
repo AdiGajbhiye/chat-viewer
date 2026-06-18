@@ -74,15 +74,32 @@ void main() {
   group('forks', () {
     final paired = pairTurns(ExportConversation(forkedConversation()));
 
-    test('regenerated response produces two child turns', () {
-      final u1 = turnById(paired, 'f-u1');
-      expect(u1.responseMd, isEmpty);
-      final children =
-          paired.turns.where((t) => t.parentTurnId == 'f-u1').toList();
-      expect(children.map((t) => t.id), ['f-a1', 'f-a2']);
-      expect(children.every((t) => t.promptMd.isEmpty), isTrue);
-      expect(turnById(paired, 'f-a1').responseMd, 'first answer');
-      expect(turnById(paired, 'f-a2').responseMd, 'second answer');
+    test('regenerated-response fork folds the prompt into full sibling turns',
+        () {
+      // The shared prompt node (f-u1) is dissolved — no prompt-only cell.
+      expect(paired.turns.any((t) => t.id == 'f-u1'), isFalse);
+      final a1 = turnById(paired, 'f-a1');
+      final a2 = turnById(paired, 'f-a2');
+      // Each branch carries the duplicated prompt + its own response.
+      expect(a1.promptMd, 'regenerate me');
+      expect(a1.responseMd, 'first answer');
+      expect(a2.promptMd, 'regenerate me');
+      expect(a2.responseMd, 'second answer');
+      // Siblings: they share the prompt's parent (here the root → null).
+      expect(a1.parentTurnId, isNull);
+      expect(a2.parentTurnId, isNull);
+    });
+
+    test('folded branch keeps both prompt and response raw nodes', () {
+      expect(
+        turnById(paired, 'f-a1').rawNodes.map((n) => n['id']),
+        ['f-u1', 'f-a1'],
+      );
+    });
+
+    test('regen siblings take the response create_time for ordering', () {
+      expect(turnById(paired, 'f-a1').createTime, 1710000001);
+      expect(turnById(paired, 'f-a2').createTime, 1710000002);
     });
 
     test('edited prompt produces sibling child turns', () {
