@@ -44,6 +44,17 @@ class _CanvasViewState extends ConsumerState<CanvasView> {
   bool _readOpen = false;
   Size _viewSize = Size.zero;
 
+  /// In-canvas search state (DESIGN.md §4 FTS): matching turn ids in rank
+  /// order, the search box's current query, and a cursor into the matches
+  /// (-1 = nothing stepped to yet). [_matchedSet] mirrors [_matchedIds] for
+  /// O(1) per-card highlight lookups during the build.
+  List<String> _matchedIds = const [];
+  Set<String> _matchedSet = const {};
+  int _matchIndex = -1;
+  bool _searching = false;
+  final _searchController = TextEditingController();
+  final _searchFocusNode = FocusNode(debugLabel: 'canvas search');
+
   /// Captured in [initState]: the dispose-time flush below must not touch
   /// [ref] (the ProviderScope above may already be disposed during app
   /// teardown).
@@ -73,6 +84,8 @@ class _CanvasViewState extends ConsumerState<CanvasView> {
     }
     _saveTimer?.cancel();
     _viewport.dispose();
+    _searchController.dispose();
+    _searchFocusNode.dispose();
     super.dispose();
   }
 
@@ -100,6 +113,7 @@ class _CanvasViewState extends ConsumerState<CanvasView> {
     }
     final saved = savedAsync.value;
     _reconcileSelection(graph, saved);
+    _reconcileSearch(layout);
 
     return LayoutBuilder(builder: (context, constraints) {
       _viewSize = constraints.biggest;
@@ -107,51 +121,117 @@ class _CanvasViewState extends ConsumerState<CanvasView> {
         _initialized = true;
         _restore(layout, saved);
       }
-      return CallbackShortcuts(
-        bindings: {
-          const SingleActivator(LogicalKeyboardKey.arrowUp): () =>
-              _navigate(layout, GridDirection.up),
-          const SingleActivator(LogicalKeyboardKey.arrowDown): () =>
-              _navigate(layout, GridDirection.down),
-          const SingleActivator(LogicalKeyboardKey.arrowLeft): () =>
-              _navigate(layout, GridDirection.left),
-          const SingleActivator(LogicalKeyboardKey.arrowRight): () =>
-              _navigate(layout, GridDirection.right),
-          const SingleActivator(LogicalKeyboardKey.keyF): () => _fit(layout),
-        },
-        child: Focus(
-          autofocus: true,
-          child: Listener(
-            onPointerSignal: _onPointerSignal,
-            child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onScaleStart: (details) {
-                _lastFocal = details.localFocalPoint;
-                _lastGestureScale = 1;
+      return Stack(
+        children: [
+          Positioned.fill(
+            child: CallbackShortcuts(
+              bindings: {
+                const SingleActivator(LogicalKeyboardKey.arrowUp): () =>
+                    _navigate(layout, GridDirection.up),
+                const SingleActivator(LogicalKeyboardKey.arrowDown): () =>
+                    _navigate(layout, GridDirection.down),
+                const SingleActivator(LogicalKeyboardKey.arrowLeft): () =>
+                    _navigate(layout, GridDirection.left),
+                const SingleActivator(LogicalKeyboardKey.arrowRight): () =>
+                    _navigate(layout, GridDirection.right),
+                const SingleActivator(LogicalKeyboardKey.keyF): () =>
+                    _fit(layout),
               },
-              onScaleUpdate: (details) {
-                _viewport.panBy(details.localFocalPoint - _lastFocal);
-                _lastFocal = details.localFocalPoint;
-                if (details.scale != _lastGestureScale) {
-                  _viewport.zoomAt(
-                    details.localFocalPoint,
-                    details.scale / _lastGestureScale,
-                  );
-                  _lastGestureScale = details.scale;
-                }
-              },
-              onDoubleTap: () => _fit(layout),
-              child: ClipRect(
-                child: ListenableBuilder(
-                  listenable: _viewport,
-                  builder: (context, _) => _buildCanvas(context, layout),
+              child: Focus(
+                autofocus: true,
+                child: Listener(
+                  onPointerSignal: _onPointerSignal,
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onScaleStart: (details) {
+                      _lastFocal = details.localFocalPoint;
+                      _lastGestureScale = 1;
+                    },
+                    onScaleUpdate: (details) {
+                      _viewport.panBy(details.localFocalPoint - _lastFocal);
+                      _lastFocal = details.localFocalPoint;
+                      if (details.scale != _lastGestureScale) {
+                        _viewport.zoomAt(
+                          details.localFocalPoint,
+                          details.scale / _lastGestureScale,
+                        );
+                        _lastGestureScale = details.scale;
+                      }
+                    },
+                    onDoubleTap: () => _fit(layout),
+                    child: ClipRect(
+                      child: ListenableBuilder(
+                        listenable: _viewport,
+                        builder: (context, _) => _buildCanvas(context, layout),
+                      ),
+                    ),
+                  ),
                 ),
               ),
             ),
           ),
-        ),
+          Positioned(
+            top: 8,
+            right: 8,
+            child: CanvasSearchBar(
+              controller: _searchController,
+              focusNode: _searchFocusNode,
+              matchCount: _matchedIds.length,
+              currentMatch: _matchIndex < 0 ? 0 : _matchIndex + 1,
+              searching: _searching,
+              onChanged: (_) => setState(() => _matchIndex = -1),
+              onClear: _clearSearch,
+              onPrev: () => _gotoMatch(-1),
+              onNext: () => _gotoMatch(1),
+            ),
+          ),
+        ],
       );
     });
+  }
+
+  /// Recomputes the in-canvas search matches for the current query (held by
+  /// the search field's controller) and keeps them scoped to turns still
+  /// present in [layout]. The step cursor is reset on every edit by the
+  /// field's `onChanged`, so the first Enter / ↓ lands on the first hit.
+  void _reconcileSearch(TurnGridLayout layout) {
+    final query = _searchController.text.trim();
+    final async = query.isEmpty
+        ? const AsyncData<List<String>>(<String>[])
+        : ref.watch(canvasSearchResultsProvider(
+            (conversationId: widget.conversationId, query: query),
+          ));
+    _searching = async.isLoading;
+    final results = async.value ?? const <String>[];
+    _matchedIds = [
+      for (final id in results)
+        if (layout.byId.containsKey(id)) id,
+    ];
+    _matchedSet = _matchedIds.toSet();
+    if (_matchIndex >= _matchedIds.length) _matchIndex = -1;
+  }
+
+  void _clearSearch() {
+    _searchController.clear();
+    setState(() => _matchIndex = -1);
+    _searchFocusNode.requestFocus();
+  }
+
+  /// Steps the search cursor by [delta] (wrapping), then selects and centers
+  /// that match. From the un-stepped state, ↓ lands on the first match and ↑
+  /// on the last.
+  void _gotoMatch(int delta) {
+    final ids = _matchedIds;
+    if (ids.isEmpty) return;
+    final n = ids.length;
+    final base = _matchIndex < 0 ? (delta >= 0 ? -1 : 0) : _matchIndex;
+    final next = ((base + delta) % n + n) % n;
+    setState(() => _matchIndex = next);
+    final layout = ref
+        .read(conversationGraphProvider(widget.conversationId))
+        .value
+        ?.layout;
+    if (layout != null) _select(layout, ids[next]);
   }
 
   Widget _buildCanvas(BuildContext context, TurnGridLayout layout) {
@@ -200,6 +280,7 @@ class _CanvasViewState extends ConsumerState<CanvasView> {
                         key: ValueKey('node-${cell.turn.id}'),
                         cell: cell,
                         selected: cell.turn.id == _selectedId,
+                        matched: _matchedSet.contains(cell.turn.id),
                         onMaximize: () => _openReadMode(cell.turn.id),
                       ),
                     ),
@@ -403,5 +484,149 @@ class _CanvasViewState extends ConsumerState<CanvasView> {
       // Two-finger scroll = pan.
       _viewport.panBy(-event.scrollDelta);
     }
+  }
+}
+
+/// "Find in conversation" box pinned to the canvas (a word-based FTS over the
+/// open conversation's turns). Typing highlights every matching node;
+/// Enter / the ↑ ↓ buttons step the canvas selection through the hits. It
+/// lives outside the canvas's keyboard-shortcut subtree, so arrow keys edit
+/// the field while it's focused and navigate the grid otherwise.
+class CanvasSearchBar extends StatelessWidget {
+  const CanvasSearchBar({
+    super.key,
+    required this.controller,
+    required this.focusNode,
+    required this.matchCount,
+    required this.currentMatch,
+    required this.searching,
+    required this.onChanged,
+    required this.onClear,
+    required this.onPrev,
+    required this.onNext,
+  });
+
+  final TextEditingController controller;
+  final FocusNode focusNode;
+  final int matchCount;
+
+  /// 1-based index of the stepped-to match, or 0 before any step.
+  final int currentMatch;
+
+  /// The query is still running (no results yet) — show progress, not a
+  /// premature "No results".
+  final bool searching;
+  final ValueChanged<String> onChanged;
+  final VoidCallback onClear;
+  final VoidCallback onPrev;
+  final VoidCallback onNext;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final hasMatches = matchCount > 0;
+
+    return Material(
+      elevation: 3,
+      borderRadius: BorderRadius.circular(8),
+      color: scheme.surfaceContainerHighest,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(10, 2, 4, 2),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.search, size: 18, color: scheme.onSurfaceVariant),
+            const SizedBox(width: 6),
+            SizedBox(
+              width: 170,
+              child: TextField(
+                controller: controller,
+                focusNode: focusNode,
+                decoration: const InputDecoration(
+                  isDense: true,
+                  border: InputBorder.none,
+                  hintText: 'Find in conversation',
+                ),
+                textInputAction: TextInputAction.search,
+                onChanged: onChanged,
+                onSubmitted: (_) => onNext(),
+              ),
+            ),
+            // ValueListenableBuilder so the counter/buttons appear and update
+            // as the field text changes without rebuilding the whole canvas.
+            ValueListenableBuilder(
+              valueListenable: controller,
+              builder: (context, value, _) {
+                if (value.text.trim().isEmpty) return const SizedBox.shrink();
+                return Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const SizedBox(width: 4),
+                    Text(
+                      hasMatches
+                          ? '${currentMatch == 0 ? '–' : currentMatch}'
+                              '/$matchCount'
+                          : searching
+                              ? '…'
+                              : 'No results',
+                      style: Theme.of(context)
+                          .textTheme
+                          .labelSmall
+                          ?.copyWith(color: scheme.onSurfaceVariant),
+                    ),
+                    _IconButton(
+                      icon: Icons.keyboard_arrow_up,
+                      tooltip: 'Previous match',
+                      onPressed: hasMatches ? onPrev : null,
+                    ),
+                    _IconButton(
+                      icon: Icons.keyboard_arrow_down,
+                      tooltip: 'Next match',
+                      onPressed: hasMatches ? onNext : null,
+                    ),
+                    _IconButton(
+                      icon: Icons.close,
+                      tooltip: 'Clear search',
+                      onPressed: onClear,
+                    ),
+                  ],
+                );
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _IconButton extends StatelessWidget {
+  const _IconButton({
+    required this.icon,
+    required this.tooltip,
+    required this.onPressed,
+  });
+
+  final IconData icon;
+  final String tooltip;
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 28,
+      height: 28,
+      child: IconButton(
+        icon: Icon(icon),
+        tooltip: tooltip,
+        onPressed: onPressed,
+        iconSize: 16,
+        padding: EdgeInsets.zero,
+        style: IconButton.styleFrom(
+          minimumSize: const Size(28, 28),
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        ),
+      ),
+    );
   }
 }

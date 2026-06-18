@@ -61,6 +61,18 @@ final searchFocusNodeProvider = Provider<FocusNode>((ref) {
   return node;
 });
 
+/// Word-based FTS over the open conversation's turns ("find in conversation"):
+/// turn ids whose prompt/response match [query], best match first. One-shot
+/// per (conversation, query) — a blank query yields no matches. The query
+/// itself is owned by the canvas view, so it resets when the conversation
+/// changes.
+final canvasSearchResultsProvider = FutureProvider.autoDispose
+    .family<List<String>, ({String conversationId, String query})>((ref, args) {
+  if (args.query.trim().isEmpty) return Future.value(const []);
+  final db = ref.watch(databaseProvider);
+  return db.searchTurnIds(args.query, conversationId: args.conversationId);
+});
+
 /// Assets referenced by one turn (`turn_assets` rows), for resolving the
 /// `asset://<pointerId>` markers in its markdown (M5).
 final turnAssetsProvider =

@@ -546,6 +546,61 @@ void main() {
       await unmountApp(tester);
     });
 
+    testWidgets('canvas search highlights matching turns and steps through them',
+        (tester) async {
+      await seed(tester);
+      await tester.pumpWidget(app());
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Forked chat'));
+      await tester.pumpAndSettle();
+      // Fit so every folded turn is built — search highlights all matches.
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyF);
+      await tester.pumpAndSettle();
+
+      // The canvas's own field, distinct from the sidebar's.
+      final canvasSearch = find.byWidgetPredicate((w) =>
+          w is TextField && w.decoration?.hintText == 'Find in conversation');
+      expect(canvasSearch, findsOneWidget);
+
+      // "answer" (prefix) hits only the two regenerated responses.
+      await tester.enterText(canvasSearch, 'answer');
+      await tester.pumpAndSettle();
+      final matched = tester
+          .widgetList<NodeCard>(find.byType(NodeCard))
+          .where((c) => c.matched)
+          .map((c) => c.cell.turn.responseMd)
+          .toList();
+      expect(matched, unorderedEquals(['first answer', 'second answer']));
+
+      // ↓ steps onto the first match and selects it; the counter advances.
+      expect(selectedCard(tester).matched, isFalse);
+      await tester.tap(find.byTooltip('Next match'));
+      await tester.pumpAndSettle();
+      expect(find.text('1/2'), findsOneWidget);
+      expect(selectedCard(tester).matched, isTrue);
+      expect(['first answer', 'second answer'],
+          contains(selectedCard(tester).cell.turn.responseMd));
+
+      // A query with no hits reports it and highlights nothing.
+      await tester.enterText(canvasSearch, 'zzznope');
+      await tester.pumpAndSettle();
+      expect(find.text('No results'), findsOneWidget);
+      expect(
+        tester
+            .widgetList<NodeCard>(find.byType(NodeCard))
+            .where((c) => c.matched),
+        isEmpty,
+      );
+
+      // Clearing the field removes the counter entirely.
+      await tester.tap(find.byTooltip('Clear search'));
+      await tester.pumpAndSettle();
+      expect(find.text('No results'), findsNothing);
+
+      await unmountApp(tester);
+    });
+
     testWidgets('read mode renders image assets and missing placeholders',
         (tester) async {
       await seed(tester);
@@ -649,8 +704,13 @@ void main() {
         await tester.sendKeyEvent(LogicalKeyboardKey.keyF);
         await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
         await tester.pump();
-        final editable =
-            tester.widget<EditableText>(find.byType(EditableText));
+        // The canvas also has its own "find in conversation" field, so target
+        // the sidebar search field specifically by its hint.
+        final sidebarField = find.byWidgetPredicate((w) =>
+            w is TextField && w.decoration?.hintText == 'Search conversations');
+        final editable = tester.widget<EditableText>(
+          find.descendant(of: sidebarField, matching: find.byType(EditableText)),
+        );
         expect(editable.focusNode.hasFocus, isTrue);
 
         await unmountApp(tester);

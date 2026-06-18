@@ -144,13 +144,26 @@ class AppDatabase extends _$AppDatabase {
         },
       );
 
-  /// Searches prompts/responses; returns matching turn ids, best first.
-  Future<List<String>> searchTurnIds(String query) async {
+  /// Word-based FTS search over prompts/responses; returns matching turn ids,
+  /// best match first. Each whitespace-separated term is quoted and prefix-
+  /// matched, then ANDed (see [ftsMatchQuery]), so free-form user text is safe
+  /// and partial words match. Scoped to one conversation when [conversationId]
+  /// is given (in-canvas "find in conversation"), otherwise global. A blank
+  /// query matches nothing.
+  Future<List<String>> searchTurnIds(String query, {String? conversationId}) async {
+    final match = ftsMatchQuery(query);
+    if (match.isEmpty) return const [];
     final rows = await customSelect(
       'SELECT t.id AS id FROM turns_fts f '
       'JOIN turns t ON t.rowid = f.rowid '
-      'WHERE turns_fts MATCH ? ORDER BY rank',
-      variables: [Variable.withString(query)],
+      'WHERE turns_fts MATCH ?'
+      '${conversationId == null ? '' : ' AND t.conversation_id = ?'} '
+      'ORDER BY rank',
+      variables: [
+        Variable.withString(match),
+        if (conversationId != null) Variable.withString(conversationId),
+      ],
+      readsFrom: {turns},
     ).get();
     return [for (final row in rows) row.read<String>('id')];
   }

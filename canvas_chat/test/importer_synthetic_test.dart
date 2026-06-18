@@ -108,6 +108,27 @@ void main() {
       expect(await db.searchTurnIds('xyzzy_not_there'), isEmpty);
     });
 
+    test('FTS scopes to a conversation and prefix-matches words', () async {
+      // "answer" appears only in conv-forked's two regenerated responses.
+      final forked =
+          await db.searchTurnIds('answer', conversationId: 'conv-forked');
+      expect(forked, hasLength(2));
+      expect(forked, everyElement(startsWith('conv-forked:')));
+      // The same word scoped to a conversation without it → nothing.
+      expect(await db.searchTurnIds('answer', conversationId: 'conv-linear'),
+          isEmpty);
+      // Word-prefix matching now applies (routed through ftsMatchQuery).
+      expect(await db.searchTurnIds('entangle', conversationId: 'conv-linear'),
+          ['conv-linear:u1']);
+      // Cross-conversation isolation: a match elsewhere stays out of scope.
+      expect(
+          await db.searchTurnIds('entanglement', conversationId: 'conv-forked'),
+          isEmpty);
+      // Blank query matches nothing.
+      expect(await db.searchTurnIds('   ', conversationId: 'conv-linear'),
+          isEmpty);
+    });
+
     test('re-import is idempotent and preserves valid canvas_state',
         () async {
       await db.into(db.canvasStates).insert(

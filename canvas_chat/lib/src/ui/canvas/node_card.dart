@@ -15,11 +15,16 @@ class NodeCard extends StatelessWidget {
     super.key,
     required this.cell,
     required this.selected,
+    this.matched = false,
     required this.onMaximize,
   });
 
   final GridCell cell;
   final bool selected;
+
+  /// This turn matches the active in-canvas search — highlight it so hits
+  /// stand out even when off the active path.
+  final bool matched;
 
   /// Enter read mode for this turn (card tap or ⊕, DESIGN.md §6).
   final VoidCallback onMaximize;
@@ -28,14 +33,17 @@ class NodeCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-    final dimmed = !cell.onActivePath && !selected;
+    // A search hit is never dimmed, so matches pop out of the dimmed lanes.
+    final dimmed = !cell.onActivePath && !selected && !matched;
 
     return Opacity(
       opacity: dimmed ? 0.6 : 1,
       child: Material(
-        color: cell.onActivePath
-            ? scheme.surfaceContainerLow
-            : scheme.surfaceContainerLowest,
+        color: matched && !selected
+            ? scheme.tertiaryContainer
+            : cell.onActivePath
+                ? scheme.surfaceContainerLow
+                : scheme.surfaceContainerLowest,
         borderRadius: BorderRadius.circular(12),
         elevation: selected ? 3 : 1,
         child: InkWell(
@@ -48,10 +56,12 @@ class NodeCard extends StatelessWidget {
               border: Border.all(
                 color: selected
                     ? scheme.primary
-                    : cell.onActivePath
-                        ? scheme.outlineVariant
-                        : scheme.outlineVariant.withValues(alpha: 0.5),
-                width: selected ? 2 : 1,
+                    : matched
+                        ? scheme.tertiary
+                        : cell.onActivePath
+                            ? scheme.outlineVariant
+                            : scheme.outlineVariant.withValues(alpha: 0.5),
+                width: selected || matched ? 2 : 1,
               ),
             ),
             padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
