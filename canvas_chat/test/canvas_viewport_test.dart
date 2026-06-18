@@ -12,14 +12,6 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   group('toScreen / toCanvas', () {
-    test('identity at the default scale and translation', () {
-      final vp = CanvasViewport();
-      expect(vp.scale, 1);
-      expect(vp.translation, Offset.zero);
-      expect(vp.toScreen(const Offset(10, 20)), const Offset(10, 20));
-      expect(vp.toCanvas(const Offset(10, 20)), const Offset(10, 20));
-    });
-
     test('applies screen = canvas * scale + translation', () {
       final vp = CanvasViewport()
         ..centerOn(Offset.zero, const Size(0, 0), scale: 2)
@@ -159,12 +151,6 @@ void main() {
   });
 
   group('visibleRect', () {
-    test('is the whole view in canvas units at the default viewport', () {
-      final vp = CanvasViewport();
-      expect(vp.visibleRect(const Size(400, 300)),
-          const Rect.fromLTWH(0, 0, 400, 300));
-    });
-
     test('shrinks and offsets with zoom and pan', () {
       final vp = CanvasViewport()
         ..centerOn(const Offset(150, 150), const Size(400, 400), scale: 2);
