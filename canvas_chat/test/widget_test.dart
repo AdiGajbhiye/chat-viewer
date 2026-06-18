@@ -306,10 +306,11 @@ void main() {
         await tapSelectedCardButton(tester, 'Maximize (read mode)');
 
         // Desktop presentation: the read surface fills the canvas pane
-        // (sidebar 320 + divider 1 → x ∈ [321, 800], y ∈ [0, 600] = 479×600)
+        // (sidebar 320 + divider 1 → x ∈ [321, 800], y ∈ [0, 600] = 479×600),
+        // inset by the route's 16px margin on every side (479-32 × 600-32),
         // over the still-mounted canvas.
         expect(find.byType(ReadOverlay), findsOneWidget);
-        expect(tester.getSize(find.byType(ReadOverlay)), const Size(479, 600));
+        expect(tester.getSize(find.byType(ReadOverlay)), const Size(447, 568));
         expect(find.byType(NodeCard), findsWidgets);
         expect(
           inOverlay(find.textContaining('edited v2', findRichText: true)),
@@ -404,7 +405,8 @@ void main() {
 
         await tapSelectedCardButton(tester, 'Maximize (read mode)');
         expect(find.byType(ReadOverlay), findsOneWidget);
-        expect(tester.getSize(find.byType(ReadOverlay)), const Size(800, 600));
+        // Full-screen route, inset by the route's 16px margin (800-32 × 600-32).
+        expect(tester.getSize(find.byType(ReadOverlay)), const Size(768, 568));
 
         // Back (pop) returns to the canvas.
         await tester.sendKeyEvent(LogicalKeyboardKey.escape);
@@ -488,28 +490,24 @@ void main() {
       await unmountApp(tester);
     });
 
-    testWidgets('read mode resumes after an app restart', (tester) async {
+    testWidgets('selecting a conversation always opens navigate mode, '
+        'even when it was last left in read mode', (tester) async {
       await openForkedChat(tester);
       await tapSelectedCardButton(tester, 'Maximize (read mode)');
       expect(find.byType(ReadOverlay), findsOneWidget);
 
-      // "Quit" with read mode open; relaunch on the same database.
+      // "Quit" with read mode open (so canvas_state persists mode='read'),
+      // then relaunch on the same database and reopen the conversation.
       await unmountApp(tester);
       await tester.pumpWidget(app());
       await tester.pumpAndSettle();
       await tester.tap(find.text('Forked chat'));
       await tester.pumpAndSettle();
 
-      // The conversation reopens in read mode on the focused turn.
-      expect(find.byType(ReadOverlay), findsOneWidget);
-      expect(
-        inOverlay(find.textContaining('edited v2', findRichText: true)),
-        findsOneWidget,
-      );
-
-      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
-      await tester.pumpAndSettle();
+      // It opens on the canvas, not the reader: read mode is never
+      // auto-restored, so a sidebar click never jumps straight into reading.
       expect(find.byType(ReadOverlay), findsNothing);
+      expect(find.byType(NodeCard), findsWidgets);
 
       await unmountApp(tester);
     });

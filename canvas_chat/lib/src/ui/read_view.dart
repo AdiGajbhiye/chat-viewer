@@ -95,7 +95,6 @@ class _ReadOverlayState extends ConsumerState<ReadOverlay> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               ReadHeader(
-                title: graph.conversation.title,
                 cell: cell,
                 layout: layout,
                 onNavigate: (direction) => _go(cell, direction),
@@ -165,22 +164,21 @@ class _ReadOverlayState extends ConsumerState<ReadOverlay> {
   }
 }
 
-/// Quick-button strip + title + breadcrumb. Same buttons as the navigate
-/// card (DESIGN.md §6 "the quick-button strip stays on top"): a single zoom
-/// button minimizes back out of read mode (the navigate card's maximize), and
-/// the arrows move the *reading focus*.
+/// Quick-button strip + breadcrumb. Same buttons as the navigate card
+/// (DESIGN.md §6 "the quick-button strip stays on top"): a single zoom button
+/// minimizes back out of read mode (the navigate card's maximize), and the
+/// arrows move the *reading focus*. Read mode shows no title — the transcript
+/// itself is the content, so the strip stays minimal.
 @visibleForTesting
 class ReadHeader extends StatelessWidget {
   const ReadHeader({
     super.key,
-    required this.title,
     required this.cell,
     required this.layout,
     required this.onNavigate,
     required this.onMinimize,
   });
 
-  final String title;
   final GridCell cell;
   final TurnGridLayout layout;
   final ValueChanged<GridDirection> onNavigate;
@@ -209,22 +207,14 @@ class ReadHeader extends StatelessWidget {
               icon: const Icon(Icons.close_fullscreen),
               onPressed: onMinimize,
             ),
-            const SizedBox(width: 8),
-            // Title, breadcrumb, and counter all live inside one flexible
-            // region so the navigation arrows stay pinned to a fixed spot on
-            // the right — regardless of title length, counter width, or
-            // whether a branch breadcrumb is showing.
+            // No title in read mode, but the breadcrumb and counter still live
+            // inside one slack-absorbing region (right-aligned within it) so
+            // the navigation arrows stay pinned to a fixed spot on the right —
+            // regardless of counter width or whether a breadcrumb is showing.
             Expanded(
               child: Row(
+                mainAxisAlignment: MainAxisAlignment.end,
                 children: [
-                  Expanded(
-                    child: Text(
-                      title.isEmpty ? '(untitled)' : title,
-                      style: theme.textTheme.titleMedium,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
                   if (_breadcrumb() case final crumb?)
                     Flexible(
                       child: Padding(
@@ -514,6 +504,11 @@ class ReadModeRoute<T> extends PopupRoute<T> {
 
   final Widget child;
 
+  /// Breathing room left between the maximized reader and the edges of the
+  /// region it grows into, so it floats as a rounded card over the dimmed
+  /// canvas rather than running edge-to-edge.
+  static const _padding = 16.0;
+
   @override
   Color? get barrierColor => Colors.black38;
 
@@ -524,7 +519,7 @@ class ReadModeRoute<T> extends PopupRoute<T> {
   String? get barrierLabel => 'Exit read mode';
 
   @override
-  Duration get transitionDuration => const Duration(milliseconds: 220);
+  Duration get transitionDuration => const Duration(milliseconds: 280);
 
   @override
   Widget buildPage(
@@ -534,16 +529,19 @@ class ReadModeRoute<T> extends PopupRoute<T> {
   ) {
     return LayoutBuilder(builder: (context, constraints) {
       final size = constraints.biggest;
-      final targetRect =
+      final region =
           fullScreen ? Offset.zero & size : (fillRect ?? Offset.zero & size);
+      // Inset the destination so the reader keeps a margin on every side.
+      final targetRect = region.deflate(_padding);
       return AnimatedBuilder(
         animation: animation,
         builder: (context, page) {
           final t = Curves.easeOutCubic.transform(animation.value);
+          // Grow/shrink the card between the tapped node and the inset reader:
+          // reads as zooming into the turn on open, back out on minimize.
           final rect = Rect.lerp(sourceRect, targetRect, t)!;
-          // The surface fills its region (window or canvas pane), so the
-          // rounded "card" corners flatten as it opens.
-          final radius = lerpDouble(12, 0, t)!;
+          // Stays a rounded card the whole way (it never touches the edges).
+          final radius = lerpDouble(12, 18, t)!;
           return Stack(
             children: [
               Positioned.fromRect(
@@ -554,7 +552,7 @@ class ReadModeRoute<T> extends PopupRoute<T> {
                   borderRadius: BorderRadius.circular(radius),
                   child: Opacity(
                     // Content fades in over the back half of the rect's
-                    // flight so the card seems to "open up".
+                    // flight so the card seems to "open up" as it zooms.
                     opacity: ((t - 0.4) / 0.6).clamp(0.0, 1.0),
                     child: page,
                   ),

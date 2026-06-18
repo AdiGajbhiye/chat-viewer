@@ -22,8 +22,11 @@ import 'node_card.dart';
 /// pannable/zoomable grid canvas — uniform collapsed cards, edges with
 /// active-path emphasis, viewport culling, and arrow-key/button selection.
 /// Tap / maximize enters read mode ([ReadOverlay] in a [ReadModeRoute]) which
-/// fills the canvas pane; mode, focused turn, and viewport are persisted per
-/// conversation in `canvas_state` and restored on open.
+/// fills the canvas pane; focused turn and viewport are persisted per
+/// conversation in `canvas_state` and restored on open. A conversation always
+/// opens in navigate mode — read mode is reached only by tapping a node, never
+/// auto-restored, so selecting a conversation never jumps straight into the
+/// reader.
 class CanvasView extends ConsumerStatefulWidget {
   const CanvasView({super.key, required this.conversationId});
 
@@ -227,8 +230,9 @@ class _CanvasViewState extends ConsumerState<CanvasView> {
   }
 
   /// First-layout initialization: viewport from the persisted state (falling
-  /// back to 1:1 centered on the selection) and, when the user left this
-  /// conversation in read mode, reopening the read overlay on it.
+  /// back to 1:1 centered on the selection). Always lands in navigate mode —
+  /// read mode is never auto-restored, so selecting a conversation shows the
+  /// canvas rather than jumping into the reader.
   void _restore(TurnGridLayout layout, CanvasState? saved) {
     final viewport = _decodeViewport(saved?.viewportJson);
     if (viewport != null) {
@@ -247,11 +251,6 @@ class _CanvasViewState extends ConsumerState<CanvasView> {
             : CanvasMetrics.cellRect(cell).center,
         viewSize: _viewSize,
       );
-    }
-    if (saved?.mode == 'read') {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted && _selectedId != null) _openReadMode(_selectedId!);
-      });
     }
   }
 
