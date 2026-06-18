@@ -125,6 +125,34 @@ void main() {
     expect(cellOf(layout, 'z'), (2, 2));
   });
 
+  test('a fork sibling stays in the adjacent lane despite a deeper branch', () {
+    // Two root siblings (e.g. regenerated responses): r-active (current) and
+    // r-sib, which continues down to row 1. The active branch also has a
+    // sub-fork (act-fork) at row 1. Topmost-first placement must give r-sib
+    // lane 1 (adjacent to r-active) and push act-fork to lane 2 — otherwise
+    // the sibling edge would have to jump a lane.
+    final layout = computeGridLayout([
+      turn('r-active', time: 2),
+      turn('act-cont', parent: 'r-active', time: 5),
+      turn('act-fork', parent: 'r-active', time: 4),
+      turn('r-sib', time: 1),
+      turn('sib-cont', parent: 'r-sib', time: 3),
+    ], 'act-cont');
+    expect(cellOf(layout, 'r-active'), (0, 0));
+    expect(cellOf(layout, 'r-sib'), (0, 1)); // adjacent, not pushed right
+    expect(cellOf(layout, 'sib-cont'), (1, 1));
+    expect(cellOf(layout, 'act-fork'), (1, 2));
+
+    // The two roots are siblings, joined by a horizontal edge on row 0.
+    expect(
+      layout.edges.any((e) =>
+          e.kind == GridEdgeKind.sibling &&
+          e.from == 'r-active' &&
+          e.to == 'r-sib'),
+      isTrue,
+    );
+  });
+
   test('neighbors follow grid semantics', () {
     final layout = computeGridLayout([
       turn('root', time: 1),

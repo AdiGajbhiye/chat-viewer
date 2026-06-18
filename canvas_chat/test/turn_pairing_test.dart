@@ -117,6 +117,121 @@ void main() {
     });
   });
 
+  group('fork folding — no empty halves', () {
+    PairedConversation pair(String id, List<Map<String, dynamic>> nodes,
+            {String? current}) =>
+        pairTurns(ExportConversation(
+            conversation(id: id, currentNode: current, nodes: nodes)));
+    Map<String, dynamic> usr(String id, String parent, String text, double t) =>
+        node(id,
+            parent: parent,
+            message: message(id, role: 'user', parts: [text], time: t));
+    Map<String, dynamic> ast(String id, String parent, String text, double t) =>
+        node(id,
+            parent: parent,
+            message: message(id, role: 'assistant', parts: [text], time: t));
+    // A transparent node (system role) that breaks the absorb chain.
+    Map<String, dynamic> sys(String id, String parent, double t) => node(id,
+        parent: parent,
+        message: message(id, role: 'system', parts: ['ctx'], time: t));
+
+    void expectNoEmptyHalves(PairedConversation p) {
+      for (final t in p.turns) {
+        expect(t.promptMd, isNotEmpty, reason: '${t.id} has empty prompt');
+        expect(t.responseMd, isNotEmpty, reason: '${t.id} has empty response');
+      }
+    }
+
+    test('single response split by a transparent sibling merges into one cell',
+        () {
+      final p = pair('A', current: 'a', [
+        node('root'),
+        usr('u', 'root', 'ask', 1),
+        ast('a', 'u', 'answer', 2),
+        sys('blank', 'u', 3), // breaks the absorb chain but is transparent
+      ]);
+      expect(p.turns, hasLength(1));
+      expect(p.turns.single.id, 'a'); // prompt node dissolved into the response
+      expect(p.turns.single.promptMd, 'ask');
+      expect(p.turns.single.responseMd, 'answer');
+    });
+
+    test('regen mid-conversation folds the prompt into full siblings', () {
+      final p = pair('C', current: 'b2', [
+        node('root'),
+        usr('u1', 'root', 'q1', 1),
+        ast('a1', 'u1', 'ans1', 2),
+        usr('u2', 'a1', 'q2', 3),
+        ast('b1', 'u2', 'ans2a', 4),
+        ast('b2', 'u2', 'ans2b', 5),
+      ]);
+      expect(p.turns.any((t) => t.id == 'u2'), isFalse); // prompt dissolved
+      expect((turnById(p, 'b1').promptMd, turnById(p, 'b1').responseMd),
+          ('q2', 'ans2a'));
+      expect((turnById(p, 'b2').promptMd, turnById(p, 'b2').responseMd),
+          ('q2', 'ans2b'));
+      // Siblings hang off the first (q1/ans1) turn.
+      expect(turnById(p, 'b1').parentTurnId, 'u1');
+      expect(turnById(p, 'b2').parentTurnId, 'u1');
+      expect(turnById(p, 'u1').responseMd, 'ans1');
+      expectNoEmptyHalves(p);
+    });
+
+    test('nested regen carries the prompt down through both fork levels', () {
+      final p = pair('D', current: 'd2', [
+        node('root'),
+        usr('u', 'root', 'q', 1),
+        ast('a1', 'u', 'ans1', 2),
+        ast('a2', 'u', 'ans2', 3),
+        ast('d1', 'a2', 'cont-a', 4),
+        ast('d2', 'a2', 'cont-b', 5),
+      ]);
+      expect(p.turns.any((t) => t.id == 'a2'), isFalse); // inner prompt dissolved
+      expect(p.turns.map((t) => t.id).toSet(), {'a1', 'd1', 'd2'});
+      for (final t in p.turns) {
+        expect(t.promptMd, 'q'); // every branch carries the shared prompt
+      }
+      expect(turnById(p, 'a1').responseMd, 'ans1');
+      expect(turnById(p, 'd1').responseMd, contains('ans2'));
+      expect(turnById(p, 'd1').responseMd, contains('cont-a'));
+      expect(turnById(p, 'd2').responseMd, contains('cont-b'));
+    });
+
+    test('response buried behind a transparent node is backfilled', () {
+      final p = pair('E', current: 'a2', [
+        node('root'),
+        usr('u', 'root', 'q', 1),
+        ast('a1', 'u', 'ans', 2),
+        sys('t', 'u', 3), // transparent fork sibling…
+        ast('a2', 't', 'buried', 4), // …hiding a regenerated response
+      ]);
+      final a2 = turnById(p, 'a2');
+      expect(a2.promptMd, 'q'); // inherited from nearest prompt-bearing ancestor
+      expect(a2.responseMd, 'buried');
+      expect(a2.parentTurnId, 'a1');
+      expectNoEmptyHalves(p);
+    });
+
+    test('genuine orphan assistant keeps its empty prompt — nothing to inherit',
+        () {
+      final p = pair('F', current: 'a', [
+        node('root'),
+        ast('a', 'root', 'hi', 1),
+      ]);
+      expect(p.turns.single.promptMd, isEmpty);
+      expect(p.turns.single.responseMd, 'hi');
+    });
+
+    test('trailing prompt with no response renders one-sided', () {
+      final p = pair('G', current: 'u', [
+        node('root'),
+        usr('u', 'root', 'hello', 1),
+      ]);
+      expect(p.turns.single.promptMd, 'hello');
+      expect(p.turns.single.responseMd, isEmpty);
+    });
+  });
+
   group('degenerate cases', () {
     test('leading system/blank nodes are skipped; assistant-first turn has '
         'an empty prompt', () {
