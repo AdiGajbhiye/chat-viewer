@@ -36,6 +36,20 @@ Future<void> main() async {
   );
 }
 
+/// Clamps [base] to the app's readable text-scale range: a 1.2x floor for a
+/// larger, more readable default UI, while still honoring a larger system
+/// text-scaling preference up to a finite 4x ceiling.
+///
+/// The ceiling MUST stay finite. A clamped [TextScaler] evaluates
+/// `maxScaleFactor * fontSize`, and clamp()'s default ceiling of
+/// `double.infinity` makes that `infinity * 0 == NaN` for a zero-size span —
+/// which trips clampDouble's `min <= max` assert and crashes layout. Markdown
+/// bodies hit this routinely: GptMarkdown inserts a `fontSize: 0` spacer after
+/// every `#` H1, so an infinite ceiling blanks read mode. 4x is well above any
+/// real platform accessibility scale.
+TextScaler clampReadableTextScale(TextScaler base) =>
+    base.clamp(minScaleFactor: 1.2, maxScaleFactor: 4);
+
 class CanvasChatApp extends ConsumerWidget {
   const CanvasChatApp({super.key});
 
@@ -50,13 +64,11 @@ class CanvasChatApp extends ConsumerWidget {
         brightness: Brightness.dark,
       ),
       themeMode: ref.watch(themeModeProvider),
-      // Enforce a minimum 1.2x text scale for a larger, more readable UI,
-      // while still honoring a larger system text-scaling preference.
       builder: (context, child) {
         final mq = MediaQuery.of(context);
         return MediaQuery(
           data: mq.copyWith(
-            textScaler: mq.textScaler.clamp(minScaleFactor: 1.2),
+            textScaler: clampReadableTextScale(mq.textScaler),
           ),
           child: child!,
         );
