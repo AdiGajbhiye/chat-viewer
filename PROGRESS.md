@@ -37,6 +37,34 @@ Statuses: `todo` → `in_progress` → `done` (or `blocked`).
 ## Log
 
 <!-- newest first: date · milestone · what was done / decisions / blockers -->
+- 2026-06-20 · post-M5 feature · Read-mode response chunking + a per-chunk
+  toolbar that forks branches — the first slice of DESIGN.md §9 "Live chat",
+  built to stay fully offline. The assistant response is split into block-level
+  chunks (`domain/markdown_blocks.dart`: paragraphs/lists/headings split on
+  blank lines, fenced code kept intact so a fence is never broken into invalid
+  markdown); each text chunk gets a subtle highlight while active and a
+  top-right toolbar that fades in on hover (long-press on touch) — Ask AI /
+  Explain / Expand / Copy. Ask/Explain/Expand fork a *child* turn off the read
+  turn via `BranchService` (`state/branching.dart`); the grid layout already
+  drops an additional child into a fresh right-hand lane, so it reads as a
+  horizontal branch, and the reader glides onto it. Answers come from a
+  pluggable `LlmProvider` (`data/llm/llm_provider.dart`) whose default
+  `StubLlmProvider` is fully offline (no network/API key) — the exact seam §9
+  calls for; the response streams into the row (drift re-emits → live UI).
+  Authored turns use an `<conv>:authored-<ts>-<seq>` id namespace and
+  `raw_json={"authored":true}`. `flutter analyze` clean, 130 tests pass (9 new:
+  6 markdown-block + 3 branch-service); a macOS integration test
+  (`integration_test/chunk_toolbar_test.dart`) drives hover→Explain→branch and
+  screenshots it (build/chunk_shots/), verified on the real engine. Decisions:
+  - Offline stub + provider-agnostic seam (user's call): keeps the app's
+    offline/no-API-key invariant while building the whole chunk→toolbar→branch
+    UX; a real provider drops in behind `llmProviderProvider`.
+  - "Horizontal branch" = a child turn (a follow-up question *is* a child); it
+    lays out horizontally whenever the source turn already has a continuation,
+    and straight down when the source was a leaf (the only sensible placement).
+  - Chunk toolbars stay mounted (opacity + IgnorePointer gated) so hover
+    in/out can fade; `branchFrom` returns `(id, done)` so the UI focuses the
+    new branch immediately while the answer streams (tests await `done`).
 - 2026-06-11 · post-M5 fix · Import failed in the real app (worked in all
   tests): drift's `computeWithDatabase` closure was inlined in
   `runImportInBackground`, and the Dart VM's shared per-scope closure context
