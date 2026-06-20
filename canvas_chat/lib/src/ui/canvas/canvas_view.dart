@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:drift/drift.dart' show Value;
-import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -18,15 +17,20 @@ import 'canvas_viewport.dart';
 import 'edge_painter.dart';
 import 'node_card.dart';
 
-/// Navigate mode (DESIGN.md §6): the conversation's turn tree on a
-/// pannable/zoomable grid canvas — uniform collapsed cards, edges with
-/// active-path emphasis, viewport culling, and arrow-key/button selection.
-/// Tap / maximize enters read mode ([ReadOverlay] in a [ReadModeRoute]) which
-/// fills the canvas pane; focused turn and viewport are persisted per
-/// conversation in `canvas_state` and restored on open. A conversation always
-/// opens in navigate mode — read mode is reached only by tapping a node, never
-/// auto-restored, so selecting a conversation never jumps straight into the
-/// reader.
+/// The two views the bottom-right toggle switches between: [graph] is the
+/// pannable canvas (the map); [read] is the full-screen reading pager. Both are
+/// inline (no pushed route), so the toggle stays visible and switching them
+/// cross-fades.
+enum CanvasViewMode { graph, read }
+
+/// The conversation surface (DESIGN.md §6): the turn tree on a pannable/zoomable
+/// grid canvas — uniform collapsed cards, edges with active-path emphasis,
+/// viewport culling, arrow-key/button selection — cross-faded with the reading
+/// pager ([ReadOverlay]). Tapping a node, or the toggle's read button, switches
+/// to the reader on the focused turn. Focused turn and viewport are persisted
+/// per conversation in `canvas_state` and restored on open; the conversation
+/// always opens on the graph (the reader is never auto-restored), so selecting
+/// a conversation never jumps straight into reading.
 class CanvasView extends ConsumerStatefulWidget {
   const CanvasView({super.key, required this.conversationId});
 
@@ -39,10 +43,14 @@ class CanvasView extends ConsumerStatefulWidget {
 class _CanvasViewState extends ConsumerState<CanvasView> {
   final _viewport = CanvasViewport();
   String? _selectedId;
-  String _mode = 'navigate';
+  CanvasViewMode _viewMode = CanvasViewMode.graph;
   bool _initialized = false;
-  bool _readOpen = false;
   Size _viewSize = Size.zero;
+
+  /// Bumped each time the reader is (re)entered so it rebuilds seated on the
+  /// current selection. Focus changes *within* the reader leave it untouched,
+  /// so paging through turns doesn't reset the reader.
+  int _readEpoch = 0;
 
   /// In-canvas search state (DESIGN.md §4 FTS): matching turn ids in rank
   /// order, the search box's current query, and a cursor into the matches
@@ -54,6 +62,10 @@ class _CanvasViewState extends ConsumerState<CanvasView> {
   bool _searching = false;
   final _searchController = TextEditingController();
   final _searchFocusNode = FocusNode(debugLabel: 'canvas search');
+
+  /// The graph canvas's keyboard focus, re-grabbed when returning from the
+  /// reader (the cross-fade means plain `autofocus` won't reclaim it).
+  final _graphFocusNode = FocusNode(debugLabel: 'graph canvas');
 
   /// Captured in [initState]: the dispose-time flush below must not touch
   /// [ref] (the ProviderScope above may already be disposed during app
@@ -86,6 +98,7 @@ class _CanvasViewState extends ConsumerState<CanvasView> {
     _viewport.dispose();
     _searchController.dispose();
     _searchFocusNode.dispose();
+    _graphFocusNode.dispose();
     super.dispose();
   }
 
@@ -115,98 +128,190 @@ class _CanvasViewState extends ConsumerState<CanvasView> {
     _reconcileSelection(graph, saved);
     _reconcileSearch(layout);
 
-    return LayoutBuilder(builder: (context, constraints) {
-      _viewSize = constraints.biggest;
-      if (!_initialized) {
-        _initialized = true;
-        _restore(layout, saved);
-      }
-      return Stack(
-        children: [
-          Positioned.fill(
-            child: CallbackShortcuts(
-              bindings: {
-                const SingleActivator(LogicalKeyboardKey.arrowUp): () =>
-                    _navigate(layout, GridDirection.up),
-                const SingleActivator(LogicalKeyboardKey.arrowDown): () =>
-                    _navigate(layout, GridDirection.down),
-                const SingleActivator(LogicalKeyboardKey.arrowLeft): () =>
-                    _navigate(layout, GridDirection.left),
-                const SingleActivator(LogicalKeyboardKey.arrowRight): () =>
-                    _navigate(layout, GridDirection.right),
-                const SingleActivator(LogicalKeyboardKey.keyF): () =>
-                    _fit(layout),
-              },
-              child: Focus(
-                autofocus: true,
-                child: Listener(
-                  onPointerSignal: _onPointerSignal,
-                  // RawGestureDetector (not GestureDetector) so the canvas
-                  // pan/zoom uses [_PanZoomGestureRecognizer], which yields the
-                  // arena to a card's tap unless the gesture is a real drag —
-                  // a plain scale recognizer steals a slightly-imprecise mouse
-                  // click before it can maximize the node.
-                  child: RawGestureDetector(
-                    behavior: HitTestBehavior.opaque,
-                    gestures: {
-                      _PanZoomGestureRecognizer:
-                          GestureRecognizerFactoryWithHandlers<
-                              _PanZoomGestureRecognizer>(
-                        () => _PanZoomGestureRecognizer(debugOwner: this),
-                        (instance) => instance
-                          ..onStart = (details) {
-                            _lastFocal = details.localFocalPoint;
-                            _lastGestureScale = 1;
-                          }
-                          ..onUpdate = (details) {
-                            _viewport
-                                .panBy(details.localFocalPoint - _lastFocal);
-                            _lastFocal = details.localFocalPoint;
-                            if (details.scale != _lastGestureScale) {
-                              _viewport.zoomAt(
-                                details.localFocalPoint,
-                                details.scale / _lastGestureScale,
-                              );
-                              _lastGestureScale = details.scale;
-                            }
-                          },
-                      ),
-                      DoubleTapGestureRecognizer:
-                          GestureRecognizerFactoryWithHandlers<
-                              DoubleTapGestureRecognizer>(
-                        () => DoubleTapGestureRecognizer(debugOwner: this),
-                        (instance) => instance.onDoubleTap = () => _fit(layout),
-                      ),
-                    },
-                    child: ClipRect(
-                      child: ListenableBuilder(
-                        listenable: _viewport,
-                        builder: (context, _) => _buildCanvas(context, layout),
-                      ),
-                    ),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        _viewSize = constraints.biggest;
+        if (!_initialized) {
+          _initialized = true;
+          _restore(layout, saved);
+        }
+        return Stack(
+          children: [
+            Positioned.fill(
+              child: AnimatedSwitcher(
+                duration: const Duration(milliseconds: 220),
+                switchInCurve: Curves.easeOut,
+                switchOutCurve: Curves.easeIn,
+                // Fill the pane; the default centering layout would size each
+                // child to its own content instead.
+                layoutBuilder: (current, previous) => Stack(
+                  fit: StackFit.expand,
+                  children: [...previous, ?current],
+                ),
+                transitionBuilder: (child, animation) => FadeTransition(
+                  opacity: animation,
+                  child: ScaleTransition(
+                    scale: Tween(begin: 0.98, end: 1.0).animate(animation),
+                    child: child,
                   ),
+                ),
+                child: _viewMode == CanvasViewMode.read
+                    ? ReadOverlay(
+                        key: ValueKey('read-$_readEpoch'),
+                        conversationId: widget.conversationId,
+                        initialTurnId:
+                            _selectedId ?? layout.cells.first.turn.id,
+                        onFocusChanged: _onReadFocusChanged,
+                        onMinimize: () => _setViewMode(CanvasViewMode.graph),
+                      )
+                    : KeyedSubtree(
+                        key: const ValueKey('graph'),
+                        child: _buildGraph(context, layout),
+                      ),
+              ),
+            ),
+            // Find-in-conversation is graph-only; the reader is navigated by
+            // paging through turns.
+            if (_viewMode == CanvasViewMode.graph)
+              Positioned(
+                top: 8,
+                right: 8,
+                child: CanvasSearchBar(
+                  controller: _searchController,
+                  focusNode: _searchFocusNode,
+                  matchCount: _matchedIds.length,
+                  currentMatch: _matchIndex < 0 ? 0 : _matchIndex + 1,
+                  searching: _searching,
+                  onChanged: (_) => setState(() => _matchIndex = -1),
+                  onClear: _clearSearch,
+                  onPrev: () => _gotoMatch(-1),
+                  onNext: () => _gotoMatch(1),
+                ),
+              ),
+            // The view toggle (graph · read), always visible bottom-right.
+            Positioned(
+              right: 8,
+              bottom: 8,
+              child: SafeArea(
+                child: ViewModeToggle(
+                  mode: _viewMode,
+                  onGraph: () => _setViewMode(CanvasViewMode.graph),
+                  onRead: () => _setViewMode(CanvasViewMode.read),
                 ),
               ),
             ),
-          ),
-          Positioned(
-            top: 8,
-            right: 8,
-            child: CanvasSearchBar(
-              controller: _searchController,
-              focusNode: _searchFocusNode,
-              matchCount: _matchedIds.length,
-              currentMatch: _matchIndex < 0 ? 0 : _matchIndex + 1,
-              searching: _searching,
-              onChanged: (_) => setState(() => _matchIndex = -1),
-              onClear: _clearSearch,
-              onPrev: () => _gotoMatch(-1),
-              onNext: () => _gotoMatch(1),
+          ],
+        );
+      },
+    );
+  }
+
+  /// The pannable/zoomable graph canvas with its arrow-key / `f`-to-fit
+  /// shortcuts and the pan-zoom gesture recognizer (extracted so the build
+  /// body can cross-fade it with the reader).
+  Widget _buildGraph(BuildContext context, TurnGridLayout layout) {
+    return CallbackShortcuts(
+      bindings: {
+        const SingleActivator(LogicalKeyboardKey.arrowUp): () =>
+            _navigate(layout, GridDirection.up),
+        const SingleActivator(LogicalKeyboardKey.arrowDown): () =>
+            _navigate(layout, GridDirection.down),
+        const SingleActivator(LogicalKeyboardKey.arrowLeft): () =>
+            _navigate(layout, GridDirection.left),
+        const SingleActivator(LogicalKeyboardKey.arrowRight): () =>
+            _navigate(layout, GridDirection.right),
+        const SingleActivator(LogicalKeyboardKey.keyF): () => _fit(layout),
+      },
+      child: Focus(
+        focusNode: _graphFocusNode,
+        autofocus: true,
+        child: Listener(
+          onPointerSignal: _onPointerSignal,
+          // RawGestureDetector (not GestureDetector) so the canvas pan/zoom
+          // uses [_PanZoomGestureRecognizer], which yields the arena to a
+          // card's tap unless the gesture is a real drag — a plain scale
+          // recognizer steals a slightly-imprecise mouse click before it can
+          // maximize the node.
+          child: RawGestureDetector(
+            behavior: HitTestBehavior.opaque,
+            gestures: {
+              _PanZoomGestureRecognizer:
+                  GestureRecognizerFactoryWithHandlers<
+                    _PanZoomGestureRecognizer
+                  >(
+                    () => _PanZoomGestureRecognizer(debugOwner: this),
+                    (instance) => instance
+                      ..onStart = (details) {
+                        _lastFocal = details.localFocalPoint;
+                        _lastGestureScale = 1;
+                      }
+                      ..onUpdate = (details) {
+                        _viewport.panBy(details.localFocalPoint - _lastFocal);
+                        _lastFocal = details.localFocalPoint;
+                        if (details.scale != _lastGestureScale) {
+                          _viewport.zoomAt(
+                            details.localFocalPoint,
+                            details.scale / _lastGestureScale,
+                          );
+                          _lastGestureScale = details.scale;
+                        }
+                      },
+                  ),
+              DoubleTapGestureRecognizer:
+                  GestureRecognizerFactoryWithHandlers<
+                    DoubleTapGestureRecognizer
+                  >(
+                    () => DoubleTapGestureRecognizer(debugOwner: this),
+                    (instance) => instance.onDoubleTap = () => _fit(layout),
+                  ),
+            },
+            child: ClipRect(
+              child: ListenableBuilder(
+                listenable: _viewport,
+                builder: (context, _) => _buildCanvas(context, layout),
+              ),
             ),
           ),
-        ],
-      );
+        ),
+      ),
+    );
+  }
+
+  /// Switches between the two views. Entering the reader re-seats it on the
+  /// current selection; returning to the graph recenters the canvas on the turn
+  /// just read so the two stay in step.
+  void _setViewMode(CanvasViewMode mode) {
+    if (_viewMode == mode) return;
+    setState(() {
+      if (mode == CanvasViewMode.read) _readEpoch++;
+      _viewMode = mode;
     });
+    if (mode == CanvasViewMode.graph) {
+      final cell = ref
+          .read(conversationGraphProvider(widget.conversationId))
+          .value
+          ?.layout
+          .byId[_selectedId];
+      if (cell != null) {
+        _viewport.centerOn(CanvasMetrics.cellRect(cell).center, _viewSize);
+      }
+      // Reclaim keyboard focus from the fading-out reader.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _graphFocusNode.requestFocus();
+      });
+    }
+    _persistState();
+  }
+
+  /// Opens the reader on [turnId] (a node tap / maximize button). Same as
+  /// switching to the read view, but anchored on the tapped turn.
+  void _enterRead(String turnId) {
+    setState(() {
+      _selectedId = turnId;
+      _readEpoch++;
+      _viewMode = CanvasViewMode.read;
+    });
+    _persistState();
   }
 
   /// Recomputes the in-canvas search matches for the current query (held by
@@ -217,9 +322,12 @@ class _CanvasViewState extends ConsumerState<CanvasView> {
     final query = _searchController.text.trim();
     final async = query.isEmpty
         ? const AsyncData<List<String>>(<String>[])
-        : ref.watch(canvasSearchResultsProvider(
-            (conversationId: widget.conversationId, query: query),
-          ));
+        : ref.watch(
+            canvasSearchResultsProvider((
+              conversationId: widget.conversationId,
+              query: query,
+            )),
+          );
     _searching = async.isLoading;
     final results = async.value ?? const <String>[];
     _matchedIds = [
@@ -273,9 +381,17 @@ class _CanvasViewState extends ConsumerState<CanvasView> {
           child: Transform(
             transform: Matrix4.identity()
               ..translateByDouble(
-                  _viewport.translation.dx, _viewport.translation.dy, 0, 1)
+                _viewport.translation.dx,
+                _viewport.translation.dy,
+                0,
+                1,
+              )
               ..scaleByDouble(
-                  _viewport.scale, _viewport.scale, _viewport.scale, 1),
+                _viewport.scale,
+                _viewport.scale,
+                _viewport.scale,
+                1,
+              ),
             child: SizedBox(
               width: contentSize.width,
               height: contentSize.height,
@@ -300,7 +416,7 @@ class _CanvasViewState extends ConsumerState<CanvasView> {
                         cell: cell,
                         selected: cell.turn.id == _selectedId,
                         matched: _matchedSet.contains(cell.turn.id),
-                        onMaximize: () => _openReadMode(cell.turn.id),
+                        onMaximize: () => _enterRead(cell.turn.id),
                       ),
                     ),
                 ],
@@ -323,16 +439,16 @@ class _CanvasViewState extends ConsumerState<CanvasView> {
     _selectedId = savedId != null && layout.byId.containsKey(savedId)
         ? savedId
         : currentId != null && layout.byId.containsKey(currentId)
-            ? currentId
-            : layout.activePathIds.isNotEmpty
-                ? layout.activePathIds.last
-                : layout.cells.first.turn.id;
+        ? currentId
+        : layout.activePathIds.isNotEmpty
+        ? layout.activePathIds.last
+        : layout.cells.first.turn.id;
   }
 
-  /// First-layout initialization: viewport from the persisted state (falling
-  /// back to 1:1 centered on the selection). Always lands in navigate mode —
-  /// read mode is never auto-restored, so selecting a conversation shows the
-  /// canvas rather than jumping into the reader.
+  /// First-layout initialization: the viewport from the persisted state
+  /// (falling back to 1:1 centered on the selection). The view always starts on
+  /// the graph — the reader is never auto-restored, so selecting a conversation
+  /// shows the map, never jumps into reading.
   void _restore(TurnGridLayout layout, CanvasState? saved) {
     final viewport = _decodeViewport(saved?.viewportJson);
     if (viewport != null) {
@@ -357,8 +473,11 @@ class _CanvasViewState extends ConsumerState<CanvasView> {
   (double, Offset)? _decodeViewport(String? json) {
     if (json == null) return null;
     try {
-      if (jsonDecode(json) case {'scale': num scale, 'cx': num cx, 'cy': num cy}
-          when scale > 0) {
+      if (jsonDecode(json) case {
+        'scale': num scale,
+        'cx': num cx,
+        'cy': num cy,
+      } when scale > 0) {
         return (scale.toDouble(), Offset(cx.toDouble(), cy.toDouble()));
       }
     } on FormatException {
@@ -367,66 +486,9 @@ class _CanvasViewState extends ConsumerState<CanvasView> {
     return null;
   }
 
-  /// Enters read mode on [turnId] (DESIGN.md §6): hero-style transition from
-  /// the cell to the read surface — full-screen on Android, filling the
-  /// canvas pane on desktop. Returns to navigate mode centered on the node
-  /// just read.
-  Future<void> _openReadMode(String turnId) async {
-    if (_readOpen || !mounted) return;
-    final layout = ref
-        .read(conversationGraphProvider(widget.conversationId))
-        .value
-        ?.layout;
-    final cell = layout?.byId[turnId];
-    if (layout == null || cell == null) return;
-    _select(layout, turnId);
-    _readOpen = true;
-    _mode = 'read';
-    _persistState();
-
-    // The cell's current on-screen rect, in the navigator's global space.
-    final cellRect = CanvasMetrics.cellRect(cell);
-    final box = context.findRenderObject() as RenderBox?;
-    final topLeft = _viewport.toScreen(cellRect.topLeft);
-    final sourceRect = (box?.localToGlobal(topLeft) ?? topLeft) &
-        cellRect.size * _viewport.scale;
-    // The canvas pane's global rect: desktop read mode fills it rather than
-    // floating as a centered dialog.
-    final paneRect =
-        box == null ? null : box.localToGlobal(Offset.zero) & box.size;
-
-    await Navigator.of(context).push(ReadModeRoute<void>(
-      sourceRect: sourceRect,
-      fillRect: paneRect,
-      fullScreen: defaultTargetPlatform == TargetPlatform.android,
-      child: ReadOverlay(
-        conversationId: widget.conversationId,
-        initialTurnId: turnId,
-        onFocusChanged: _onReadFocusChanged,
-      ),
-    ));
-    if (!mounted) return;
-
-    _readOpen = false;
-    _mode = 'navigate';
-    // Minimize returns to navigate mode centered on the node just read.
-    final latest = ref
-            .read(conversationGraphProvider(widget.conversationId))
-            .value
-            ?.layout ??
-        layout;
-    final focused = latest.byId[_selectedId];
-    if (focused != null) {
-      _viewport.centerOn(
-        CanvasMetrics.cellRect(focused).center,
-        _viewSize,
-      );
-    }
-    _persistState();
-  }
-
-  /// Reading focus moved inside the overlay: mirror it into the canvas
-  /// selection (and persistence) so minimize lands on the right node.
+  /// Reading focus moved inside the reader: mirror it into the shared
+  /// selection (and persistence) so switching back to the graph lands on the
+  /// right node.
   void _onReadFocusChanged(String turnId) {
     if (!mounted) return;
     setState(() => _selectedId = turnId);
@@ -472,20 +534,27 @@ class _CanvasViewState extends ConsumerState<CanvasView> {
     _saveTimer?.cancel();
     final id = _selectedId;
     if (!_initialized || id == null) return;
+    // The reader persists as 'read' but is never auto-restored; the graph
+    // persists as 'navigate'.
+    final mode = _viewMode == CanvasViewMode.read ? 'read' : 'navigate';
     final center = _viewport.visibleRect(_viewSize).center;
     unawaited(
       _db
           .into(_db.canvasStates)
-          .insertOnConflictUpdate(CanvasStatesCompanion(
-            conversationId: Value(widget.conversationId),
-            mode: Value(_mode),
-            focusedTurnId: Value(id),
-            viewportJson: Value(jsonEncode({
-              'scale': _viewport.scale,
-              'cx': center.dx,
-              'cy': center.dy,
-            })),
-          ))
+          .insertOnConflictUpdate(
+            CanvasStatesCompanion(
+              conversationId: Value(widget.conversationId),
+              mode: Value(mode),
+              focusedTurnId: Value(id),
+              viewportJson: Value(
+                jsonEncode({
+                  'scale': _viewport.scale,
+                  'cx': center.dx,
+                  'cy': center.dy,
+                }),
+              ),
+            ),
+          )
           .catchError((Object _) => 0),
     );
   }
@@ -584,14 +653,13 @@ class CanvasSearchBar extends StatelessWidget {
                     Text(
                       hasMatches
                           ? '${currentMatch == 0 ? '–' : currentMatch}'
-                              '/$matchCount'
+                                '/$matchCount'
                           : searching
-                              ? '…'
-                              : 'No results',
-                      style: Theme.of(context)
-                          .textTheme
-                          .labelSmall
-                          ?.copyWith(color: scheme.onSurfaceVariant),
+                          ? '…'
+                          : 'No results',
+                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                        color: scheme.onSurfaceVariant,
+                      ),
                     ),
                     _IconButton(
                       icon: Icons.keyboard_arrow_up,
@@ -693,6 +761,87 @@ class _IconButton extends StatelessWidget {
         style: IconButton.styleFrom(
           minimumSize: const Size(28, 28),
           tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        ),
+      ),
+    );
+  }
+}
+
+/// The bottom-right, icons-only view switcher (DESIGN.md §6): graph · read.
+/// Always visible in both views, with the current one shown as selected.
+class ViewModeToggle extends StatelessWidget {
+  const ViewModeToggle({
+    super.key,
+    required this.mode,
+    required this.onGraph,
+    required this.onRead,
+  });
+
+  final CanvasViewMode mode;
+  final VoidCallback onGraph;
+  final VoidCallback onRead;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Material(
+      elevation: 3,
+      color: scheme.surfaceContainerHighest,
+      borderRadius: BorderRadius.circular(24),
+      child: Padding(
+        padding: const EdgeInsets.all(4),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _ToggleButton(
+              icon: Icons.account_tree_outlined,
+              tooltip: 'Graph view',
+              selected: mode == CanvasViewMode.graph,
+              onPressed: onGraph,
+            ),
+            _ToggleButton(
+              icon: Icons.chrome_reader_mode_outlined,
+              tooltip: 'Read view',
+              selected: mode == CanvasViewMode.read,
+              onPressed: onRead,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ToggleButton extends StatelessWidget {
+  const _ToggleButton({
+    required this.icon,
+    required this.tooltip,
+    required this.selected,
+    required this.onPressed,
+  });
+
+  final IconData icon;
+  final String tooltip;
+  final bool selected;
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 2),
+      child: IconButton(
+        icon: Icon(icon),
+        tooltip: tooltip,
+        isSelected: selected,
+        onPressed: onPressed,
+        style: IconButton.styleFrom(
+          backgroundColor: selected
+              ? scheme.primaryContainer
+              : Colors.transparent,
+          foregroundColor: selected
+              ? scheme.onPrimaryContainer
+              : scheme.onSurfaceVariant,
         ),
       ),
     );

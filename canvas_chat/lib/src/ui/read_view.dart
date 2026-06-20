@@ -1,7 +1,5 @@
 import 'dart:io';
-import 'dart:ui' show lerpDouble;
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -13,21 +11,31 @@ import '../domain/grid_layout.dart';
 import '../state/providers.dart';
 import 'canvas/node_card.dart';
 
-/// Read mode (DESIGN.md §6): the focused turn maximized — full prompt +
-/// response markdown, collapsible reasoning — with the quick-button strip on
-/// top. ↑/↓ walk the conversation like a transcript (parent/child along the
-/// lane), ←/→ jump across branches at the same depth, with a breadcrumb
-/// showing which branch you're on. Esc / minimize / back exits.
+/// Read view (DESIGN.md §6): the conversation as a full-screen pager, one turn
+/// at a time — full prompt + response markdown, collapsible reasoning, with a
+/// quick-button strip on top. It is one of the two views the bottom-right
+/// toggle switches between (the other is the graph), and is also where tapping
+/// a node lands.
 ///
-/// Pushed by the canvas inside a [ReadModeRoute]; focus changes are reported
-/// back through [onFocusChanged] so navigate mode ends up centered on the
-/// node just read.
+/// Navigation moves the *reading focus* one turn at a time, with a directional
+/// slide between turns:
+/// - ↑/↓ (arrows, buttons, or a vertical swipe past the transcript's edge) walk
+///   the conversation like a transcript — parent/child along the branch.
+/// - ←/→ (arrows, buttons, or a horizontal swipe) jump across branches at the
+///   same depth, with a breadcrumb showing which branch you're on.
+///
+/// A turn taller than the screen scrolls normally; only an overscroll past the
+/// top/bottom edge pages to the neighbour, so reading never fights paging.
+/// Focus changes are reported through [onFocusChanged] so the shared selection
+/// stays in sync; [onMinimize] (the quick-button strip's ⊖, or Esc) drops back
+/// to the graph centered on the turn just read.
 class ReadOverlay extends ConsumerStatefulWidget {
   const ReadOverlay({
     super.key,
     required this.conversationId,
     required this.initialTurnId,
     this.onFocusChanged,
+    this.onMinimize,
   });
 
   final String conversationId;
@@ -36,21 +44,55 @@ class ReadOverlay extends ConsumerStatefulWidget {
   /// Called whenever the reading focus moves to another turn.
   final ValueChanged<String>? onFocusChanged;
 
+  /// Minimize back to the graph (⊖ / Esc). Null disables it.
+  final VoidCallback? onMinimize;
+
   @override
   ConsumerState<ReadOverlay> createState() => _ReadOverlayState();
 }
 
-class _ReadOverlayState extends ConsumerState<ReadOverlay> {
-  /// Drag-overscroll a swipe must accumulate to advance (Android).
+class _ReadOverlayState extends ConsumerState<ReadOverlay>
+    with SingleTickerProviderStateMixin {
+  /// Drag-overscroll a vertical swipe must accumulate to page up/down.
   static const _swipeAdvanceThreshold = 64.0;
 
+  /// Horizontal fling velocity (px/s) that pages to an adjacent branch.
+  static const _branchFlingThreshold = 320.0;
+
   late String _focusedId = widget.initialTurnId;
-  final _scrollController = ScrollController();
   double _dragOverscroll = 0;
+
+  /// Explicitly grabbed on mount: when the reader cross-fades in over the graph
+  /// the graph still holds keyboard focus, so plain `autofocus` would be
+  /// ignored and the arrow/Esc shortcuts would go nowhere.
+  final _focusNode = FocusNode(debugLabel: 'reader');
+
+  /// Drives the slide between the outgoing and incoming turn.
+  late final AnimationController _anim = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 260),
+  );
+  String? _outgoingId;
+  Animation<Offset> _outSlide = const AlwaysStoppedAnimation(Offset.zero);
+  Animation<Offset> _inSlide = const AlwaysStoppedAnimation(Offset.zero);
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _focusNode.requestFocus();
+    });
+    _anim.addStatusListener((status) {
+      if (status == AnimationStatus.completed && mounted) {
+        setState(() => _outgoingId = null);
+      }
+    });
+  }
 
   @override
   void dispose() {
-    _scrollController.dispose();
+    _focusNode.dispose();
+    _anim.dispose();
     super.dispose();
   }
 
@@ -70,7 +112,8 @@ class _ReadOverlayState extends ConsumerState<ReadOverlay> {
       return const Center(child: Text('This conversation has no turns.'));
     }
     // Reconcile across data refreshes (e.g. re-import while reading).
-    final cell = layout.byId[_focusedId] ??
+    final cell =
+        layout.byId[_focusedId] ??
         layout.byId[layout.activePathIds.isNotEmpty
             ? layout.activePathIds.last
             : layout.cells.first.turn.id]!;
@@ -85,49 +128,84 @@ class _ReadOverlayState extends ConsumerState<ReadOverlay> {
             _go(cell, GridDirection.left),
         const SingleActivator(LogicalKeyboardKey.arrowRight): () =>
             _go(cell, GridDirection.right),
-        const SingleActivator(LogicalKeyboardKey.escape): () =>
-            Navigator.of(context).maybePop(),
+        const SingleActivator(LogicalKeyboardKey.escape): ?widget.onMinimize,
       },
       child: Focus(
+        focusNode: _focusNode,
         autofocus: true,
-        child: SafeArea(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              ReadHeader(
-                cell: cell,
-                layout: layout,
-                onNavigate: (direction) => _go(cell, direction),
-                onMinimize: () => Navigator.of(context).maybePop(),
-              ),
-              const Divider(height: 1),
-              Expanded(
-                child: NotificationListener<ScrollNotification>(
-                  onNotification: (notification) =>
-                      _onScrollNotification(notification, cell),
-                  child: SingleChildScrollView(
-                    controller: _scrollController,
-                    // Always accept drags so swipe-to-advance works even
-                    // when the turn fits on one screen.
-                    physics: const AlwaysScrollableScrollPhysics(),
-                    padding: const EdgeInsets.all(20),
-                    child: _TurnBody(turn: cell.turn),
-                  ),
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          // A horizontal swipe pages across branches; the vertical scroll view
+          // owns vertical drags, so the gesture arena keeps the two axes
+          // separate (no diagonal paging).
+          onHorizontalDragEnd: (details) => _onHorizontalDragEnd(details, cell),
+          child: SafeArea(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                ReadHeader(
+                  cell: cell,
+                  layout: layout,
+                  onNavigate: (direction) => _go(cell, direction),
+                  onMinimize: widget.onMinimize ?? () {},
                 ),
-              ),
-            ],
+                const Divider(height: 1),
+                Expanded(child: _animatedBody(layout, cell)),
+              ],
+            ),
           ),
         ),
       ),
     );
   }
 
-  /// Android: swipe up/down also advances (DESIGN.md §6 read mode). Drag
-  /// overscroll past the transcript's top/bottom edge accumulates; on
-  /// release past the threshold the focus moves to the previous/next turn.
-  /// Normal in-content scrolling never overscrolls, so it is unaffected.
-  bool _onScrollNotification(ScrollNotification notification, GridCell cell) {
-    if (defaultTargetPlatform != TargetPlatform.android) return false;
+  /// The transcript area: the focused turn, or — mid-navigation — the outgoing
+  /// turn sliding away while the incoming one slides in.
+  Widget _animatedBody(TurnGridLayout layout, GridCell cell) {
+    final live = _body(cell, live: true);
+    final outgoing = _outgoingId == null ? null : layout.byId[_outgoingId!];
+    if (outgoing == null) return live;
+    return Stack(
+      children: [
+        Positioned.fill(
+          child: IgnorePointer(
+            child: SlideTransition(
+              position: _outSlide,
+              child: _body(outgoing, live: false),
+            ),
+          ),
+        ),
+        Positioned.fill(
+          child: SlideTransition(position: _inSlide, child: live),
+        ),
+      ],
+    );
+  }
+
+  /// One turn's scrollable transcript. The [live] one also watches for an
+  /// overscroll past its edges to page up/down; the outgoing snapshot doesn't.
+  Widget _body(GridCell cell, {required bool live}) {
+    final scroll = SingleChildScrollView(
+      // Keyed by turn so each turn gets a fresh scroll position (starts at top).
+      key: ValueKey('read-body-${cell.turn.id}'),
+      physics: const AlwaysScrollableScrollPhysics(),
+      padding: const EdgeInsets.all(20),
+      child: TurnBody(turn: cell.turn),
+    );
+    if (!live) return scroll;
+    return NotificationListener<ScrollNotification>(
+      onNotification: (notification) => _onScroll(notification, cell),
+      child: scroll,
+    );
+  }
+
+  /// Vertical swipe-to-advance: drag overscroll past the transcript's top/
+  /// bottom edge accumulates; on release past the threshold the focus pages to
+  /// the previous/next turn. Normal in-content scrolling never overscrolls, so
+  /// it is unaffected. (Drag-driven only — a mouse wheel has no [dragDetails]
+  /// and so never pages; desktop uses the arrows.)
+  bool _onScroll(ScrollNotification notification, GridCell cell) {
+    if (_anim.isAnimating) return false;
     switch (notification) {
       case ScrollStartNotification():
         _dragOverscroll = 0;
@@ -148,7 +226,19 @@ class _ReadOverlayState extends ConsumerState<ReadOverlay> {
     return false;
   }
 
+  void _onHorizontalDragEnd(DragEndDetails details, GridCell cell) {
+    if (_anim.isAnimating) return;
+    final velocity = details.primaryVelocity ?? 0;
+    if (velocity <= -_branchFlingThreshold) {
+      _go(cell, GridDirection.right); // swipe left → next branch
+    } else if (velocity >= _branchFlingThreshold) {
+      _go(cell, GridDirection.left); // swipe right → previous branch
+    }
+  }
+
+  /// Moves the reading focus one turn in [direction] with a directional slide.
   void _go(GridCell cell, GridDirection direction) {
+    if (_anim.isAnimating) return;
     final target = switch (direction) {
       GridDirection.up => cell.up,
       GridDirection.down => cell.down,
@@ -156,19 +246,32 @@ class _ReadOverlayState extends ConsumerState<ReadOverlay> {
       GridDirection.right => cell.right,
     };
     if (target == null || target == _focusedId) return;
-    setState(() => _focusedId = target);
-    if (_scrollController.hasClients) {
-      _scrollController.jumpTo(0);
-    }
+
+    // The incoming turn enters from the direction of travel; the outgoing one
+    // leaves the opposite way.
+    final (Offset outEnd, Offset inBegin) = switch (direction) {
+      GridDirection.down => (const Offset(0, -1), const Offset(0, 1)),
+      GridDirection.up => (const Offset(0, 1), const Offset(0, -1)),
+      GridDirection.right => (const Offset(-1, 0), const Offset(1, 0)),
+      GridDirection.left => (const Offset(1, 0), const Offset(-1, 0)),
+    };
+    final curve = CurvedAnimation(parent: _anim, curve: Curves.easeOutCubic);
+    _outSlide = Tween(begin: Offset.zero, end: outEnd).animate(curve);
+    _inSlide = Tween(begin: inBegin, end: Offset.zero).animate(curve);
+
+    setState(() {
+      _outgoingId = _focusedId;
+      _focusedId = target;
+    });
+    _anim.forward(from: 0);
     widget.onFocusChanged?.call(target);
   }
 }
 
-/// Quick-button strip + breadcrumb. Same buttons as the navigate card
-/// (DESIGN.md §6 "the quick-button strip stays on top"): a single zoom button
-/// minimizes back out of read mode (the navigate card's maximize), and the
-/// arrows move the *reading focus*. Read mode shows no title — the transcript
-/// itself is the content, so the strip stays minimal.
+/// Quick-button strip + breadcrumb (DESIGN.md §6 "the quick-button strip stays
+/// on top"): a single button minimizes back to the graph, and the arrows move
+/// the *reading focus*. Read mode shows no title — the transcript itself is the
+/// content, so the strip stays minimal.
 @visibleForTesting
 class ReadHeader extends StatelessWidget {
   const ReadHeader({
@@ -187,7 +290,7 @@ class ReadHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    // Compact icon buttons so the strip fits even when read mode fills a
+    // Compact icon buttons so the strip fits even when the reader fills a
     // narrow canvas pane.
     return IconButtonTheme(
       data: IconButtonThemeData(
@@ -221,8 +324,9 @@ class ReadHeader extends StatelessWidget {
                         padding: const EdgeInsets.symmetric(horizontal: 8),
                         child: Text(
                           crumb,
-                          style: theme.textTheme.labelMedium
-                              ?.copyWith(color: theme.colorScheme.primary),
+                          style: theme.textTheme.labelMedium?.copyWith(
+                            color: theme.colorScheme.primary,
+                          ),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           softWrap: false,
@@ -243,8 +347,9 @@ class ReadHeader extends StatelessWidget {
             IconButton(
               tooltip: 'Go up',
               icon: const Icon(Icons.arrow_upward),
-              onPressed:
-                  cell.up == null ? null : () => onNavigate(GridDirection.up),
+              onPressed: cell.up == null
+                  ? null
+                  : () => onNavigate(GridDirection.up),
             ),
             IconButton(
               tooltip: 'Go down',
@@ -286,8 +391,12 @@ class ReadHeader extends StatelessWidget {
   }
 }
 
-class _TurnBody extends ConsumerWidget {
-  const _TurnBody({required this.turn});
+/// The full body of one turn: the user prompt card, optional collapsible
+/// reasoning, and the assistant response — markdown with `asset://` markers
+/// resolved against `turn_assets`. Shared by the read view (one turn at a
+/// time) and anywhere else a turn's full content is shown.
+class TurnBody extends ConsumerWidget {
+  const TurnBody({super.key, required this.turn});
 
   final Turn turn;
 
@@ -340,13 +449,17 @@ class _TurnBody extends ConsumerWidget {
             ],
           ),
         Text(
-          turn.modelSlug == null ? 'Assistant' : 'Assistant · ${turn.modelSlug}',
+          turn.modelSlug == null
+              ? 'Assistant'
+              : 'Assistant · ${turn.modelSlug}',
           style: theme.textTheme.labelSmall,
         ),
         const SizedBox(height: 8),
         if (turn.responseMd.isEmpty)
-          Text('(no response)',
-              style: TextStyle(color: theme.colorScheme.outline))
+          Text(
+            '(no response)',
+            style: TextStyle(color: theme.colorScheme.outline),
+          )
         else
           _MarkdownWithAssets(
             markdown: turn.responseMd,
@@ -412,7 +525,12 @@ class AssetBlock extends StatelessWidget {
   const AssetBlock({super.key, required this.asset});
 
   static const _imageExtensions = {
-    '.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp',
+    '.png',
+    '.jpg',
+    '.jpeg',
+    '.gif',
+    '.webp',
+    '.bmp',
   };
 
   /// The copied asset, or null when missing/unresolved.
@@ -482,99 +600,13 @@ class AssetBlock extends StatelessWidget {
           Flexible(
             child: Text(
               detail == null ? label : '$label · $detail',
-              style: theme.textTheme.bodySmall
-                  ?.copyWith(color: theme.colorScheme.outline),
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.outline,
+              ),
             ),
           ),
         ],
       ),
     );
-  }
-}
-
-/// Navigate → read transition (DESIGN.md §6 "Rendering approach"): a route
-/// whose page grows hero-style from the tapped cell's on-screen rect to the
-/// read surface — the full screen on Android, filling the canvas pane on
-/// macOS/desktop. The canvas underneath keeps its viewport.
-class ReadModeRoute<T> extends PopupRoute<T> {
-  ReadModeRoute({
-    required this.sourceRect,
-    required this.fullScreen,
-    this.fillRect,
-    required this.child,
-  });
-
-  /// Global on-screen rect of the cell the transition starts from.
-  final Rect sourceRect;
-
-  /// Full-screen page (Android) vs an overlay filling [fillRect] (desktop).
-  final bool fullScreen;
-
-  /// Desktop: the canvas pane's global rect the read surface grows to fill.
-  /// Null (or [fullScreen]) → the whole window.
-  final Rect? fillRect;
-
-  final Widget child;
-
-  /// Breathing room left between the maximized reader and the edges of the
-  /// region it grows into, so it floats as a rounded card over the dimmed
-  /// canvas rather than running edge-to-edge.
-  static const _padding = 16.0;
-
-  @override
-  Color? get barrierColor => Colors.black38;
-
-  @override
-  bool get barrierDismissible => !fullScreen;
-
-  @override
-  String? get barrierLabel => 'Exit read mode';
-
-  @override
-  Duration get transitionDuration => const Duration(milliseconds: 280);
-
-  @override
-  Widget buildPage(
-    BuildContext context,
-    Animation<double> animation,
-    Animation<double> secondaryAnimation,
-  ) {
-    return LayoutBuilder(builder: (context, constraints) {
-      final size = constraints.biggest;
-      final region =
-          fullScreen ? Offset.zero & size : (fillRect ?? Offset.zero & size);
-      // Inset the destination so the reader keeps a margin on every side.
-      final targetRect = region.deflate(_padding);
-      return AnimatedBuilder(
-        animation: animation,
-        builder: (context, page) {
-          final t = Curves.easeOutCubic.transform(animation.value);
-          // Grow/shrink the card between the tapped node and the inset reader:
-          // reads as zooming into the turn on open, back out on minimize.
-          final rect = Rect.lerp(sourceRect, targetRect, t)!;
-          // Stays a rounded card the whole way (it never touches the edges).
-          final radius = lerpDouble(12, 18, t)!;
-          return Stack(
-            children: [
-              Positioned.fromRect(
-                rect: rect,
-                child: Material(
-                  clipBehavior: Clip.antiAlias,
-                  elevation: 8,
-                  borderRadius: BorderRadius.circular(radius),
-                  child: Opacity(
-                    // Content fades in over the back half of the rect's
-                    // flight so the card seems to "open up" as it zooms.
-                    opacity: ((t - 0.4) / 0.6).clamp(0.0, 1.0),
-                    child: page,
-                  ),
-                ),
-              ),
-            ],
-          );
-        },
-        child: child,
-      );
-    });
   }
 }

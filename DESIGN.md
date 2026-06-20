@@ -21,17 +21,28 @@ response(s) to it. A linear conversation renders as a vertical chain of turn-nod
 connected by edges. When a prompt was edited or a response regenerated, the parent
 node has multiple children — the chain forks into a new column.
 
-### Two modes
+### Views
 
-The UI has exactly two modes per conversation:
+A conversation has two views, switched by an icons-only toggle pinned
+bottom-right (graph · read) that stays visible in both. They cross-fade into
+each other in place (no pushed route). The current view is remembered per
+conversation in `canvas_state.mode`, but the reader is never *auto-restored* —
+opening a conversation always lands on the graph.
 
-- **Navigate mode** — the broad canvas. Nodes are collapsed to just the user
-  query, laid out on a fixed grid (rows = turn order, columns = branch lanes),
-  so the shape of the conversation and its forks is visible at a glance.
-- **Read mode** — one node maximized: the full prompt and response, scrollable,
-  with markdown/images/code. Arrow buttons move focus to the adjacent node
-  while staying in read mode; minimizing drops back to navigate mode centered
-  on that node.
+- **Graph mode** — the broad canvas (the map). Nodes are collapsed to just the
+  user query, laid out on a fixed grid (rows = turn order, columns = branch
+  lanes), so the shape of the conversation and its forks is visible at a glance.
+- **Read mode** — the conversation as a full-screen pager, one turn at a time:
+  full prompt + response markdown, collapsible reasoning. ↑/↓ (arrows, buttons,
+  or a vertical swipe past the transcript edge) page parent/child along the
+  branch; ←/→ (arrows, buttons, or a horizontal swipe) page across branches at
+  the same depth, with a directional slide and a "branch i of n" breadcrumb. A
+  turn taller than the screen scrolls; only an edge overscroll pages, so reading
+  never fights paging. The axes never mix — no diagonal paging.
+
+Tapping a node (or the strip's **maximize**) opens the reader on that turn;
+**minimize** (⊖ / Esc) drops back to the graph centered on the turn just read.
+The focused turn is shared, so switching views keeps your place.
 
 ```
  NAVIGATE (grid of collapsed nodes)         READ (one node maximized)
@@ -318,9 +329,10 @@ Custom canvas, not a package:
 - Edges in a single `CustomPainter` below the node layer.
 - Nodes are real widgets positioned by a `CustomMultiChildLayout`-style
   delegate using the grid; uniform cells make culling exact.
-- Read mode is a route with a hero-style transition from the cell (full-screen
-  page on Android, overlay dialog on macOS); the canvas underneath keeps its
-  viewport.
+- Read mode is an inline view cross-faded with the graph (no pushed route), so
+  the bottom-right toggle stays visible across both; the graph keeps its
+  viewport while hidden. Within the reader, turns slide directionally as the
+  focus pages.
 
 Evaluated alternatives: `graphview` (layout too rigid), flutter_flow-style node
 editors (free-form, wrong model). A fixed grid + two modes is small enough to

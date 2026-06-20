@@ -306,13 +306,12 @@ void main() {
 
         await tapSelectedCardButton(tester, 'Maximize (read mode)');
 
-        // Desktop presentation: the read surface fills the canvas pane
-        // (sidebar 320 + divider 1 → x ∈ [321, 800], y ∈ [0, 600] = 479×600),
-        // inset by the route's 16px margin on every side (479-32 × 600-32),
-        // over the still-mounted canvas.
+        // The reader fills the canvas pane (sidebar 320 + divider 1 →
+        // x ∈ [321, 800], y ∈ [0, 600] = 479×600) and replaces the graph in
+        // place — it is a view now, not an overlay floating over the canvas.
         expect(find.byType(ReadOverlay), findsOneWidget);
-        expect(tester.getSize(find.byType(ReadOverlay)), const Size(447, 568));
-        expect(find.byType(NodeCard), findsWidgets);
+        expect(tester.getSize(find.byType(ReadOverlay)), const Size(479, 600));
+        expect(find.byType(NodeCard), findsNothing);
         expect(
           inOverlay(find.textContaining('edited v2', findRichText: true)),
           findsOneWidget,
@@ -445,28 +444,6 @@ void main() {
       await unmountApp(tester);
     });
 
-    testWidgets('read mode is a full-screen route on Android',
-        (tester) async {
-      debugDefaultTargetPlatformOverride = TargetPlatform.android;
-      try {
-        await openForkedChat(tester);
-
-        await tapSelectedCardButton(tester, 'Maximize (read mode)');
-        expect(find.byType(ReadOverlay), findsOneWidget);
-        // Full-screen route, inset by the route's 16px margin (800-32 × 600-32).
-        expect(tester.getSize(find.byType(ReadOverlay)), const Size(768, 568));
-
-        // Back (pop) returns to the canvas.
-        await tester.sendKeyEvent(LogicalKeyboardKey.escape);
-        await tester.pumpAndSettle();
-        expect(find.byType(ReadOverlay), findsNothing);
-
-        await unmountApp(tester);
-      } finally {
-        debugDefaultTargetPlatformOverride = null;
-      }
-    });
-
     testWidgets('focus and viewport persist per conversation and restore',
         (tester) async {
       await openForkedChat(tester);
@@ -497,10 +474,8 @@ void main() {
       await unmountApp(tester);
     });
 
-    testWidgets('Android: swipe up/down advances the reading focus',
-        (tester) async {
-      // Widget tests default to TargetPlatform.android — the swipe gesture
-      // is only active there.
+    testWidgets('swipe up/down advances the reading focus', (tester) async {
+      // The reader pages on a vertical overscroll past the transcript edge.
       await openForkedChat(tester);
       await tapSelectedCardButton(tester, 'Maximize (read mode)');
       expect(find.byType(ReadOverlay), findsOneWidget);
@@ -533,6 +508,42 @@ void main() {
         inOverlay(find.textContaining('edited v2', findRichText: true)),
         findsOneWidget,
       );
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+      await unmountApp(tester);
+    });
+
+    testWidgets('horizontal swipe pages across sibling branches',
+        (tester) async {
+      await openForkedChat(tester);
+      await tapSelectedCardButton(tester, 'Maximize (read mode)');
+      expect(
+        inOverlay(find.textContaining('edited v2', findRichText: true)),
+        findsOneWidget,
+      );
+
+      // Swipe left → the next branch at this depth (lane 1 on this row).
+      await tester.fling(
+        find.byType(ReadOverlay),
+        const Offset(-400, 0),
+        1000,
+      );
+      await tester.pumpAndSettle();
+      expect(
+        inOverlay(find.textContaining('follow up', findRichText: true)),
+        findsOneWidget,
+      );
+      expect(inOverlay(find.text('⑂ Branch 2 of 3')), findsOneWidget);
+
+      // Swipe right → back to the original branch.
+      await tester.fling(find.byType(ReadOverlay), const Offset(400, 0), 1000);
+      await tester.pumpAndSettle();
+      expect(
+        inOverlay(find.textContaining('edited v2', findRichText: true)),
+        findsOneWidget,
+      );
+      expect(inOverlay(find.text('⑂ Branch 1 of 3')), findsOneWidget);
 
       await tester.sendKeyEvent(LogicalKeyboardKey.escape);
       await tester.pumpAndSettle();
