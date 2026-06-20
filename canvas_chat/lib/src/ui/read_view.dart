@@ -139,29 +139,35 @@ class _ReadOverlayState extends ConsumerState<ReadOverlay>
           // owns vertical drags, so the gesture arena keeps the two axes
           // separate (no diagonal paging).
           onHorizontalDragEnd: (details) => _onHorizontalDragEnd(details, cell),
-          child: SafeArea(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                ReadHeader(
-                  cell: cell,
-                  layout: layout,
-                  onNavigate: (direction) => _go(cell, direction),
-                ),
-                const Divider(height: 1),
-                Expanded(child: _animatedBody(layout, cell)),
-              ],
-            ),
-          ),
+          child: SafeArea(child: _animatedPage(layout, cell)),
         ),
       ),
     );
   }
 
-  /// The transcript area: the focused turn, or — mid-navigation — the outgoing
-  /// turn sliding away while the incoming one slides in.
-  Widget _animatedBody(TurnGridLayout layout, GridCell cell) {
-    final live = _body(cell, live: true);
+  /// One whole turn "page": header, divider, and transcript stacked together,
+  /// so a navigation slides the entire node as a unit instead of only the
+  /// transcript moving under a header that stays put.
+  Widget _page(TurnGridLayout layout, GridCell cell, {required bool live}) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        ReadHeader(
+          cell: cell,
+          layout: layout,
+          onNavigate: (direction) => _go(cell, direction),
+        ),
+        const Divider(height: 1),
+        Expanded(child: _body(cell, live: live)),
+      ],
+    );
+  }
+
+  /// The reader page, or — mid-navigation — the outgoing page sliding away while
+  /// the incoming one slides in. The outgoing page is inert ([IgnorePointer])
+  /// and is dropped once the slide completes.
+  Widget _animatedPage(TurnGridLayout layout, GridCell cell) {
+    final live = _page(layout, cell, live: true);
     final outgoing = _outgoingId == null ? null : layout.byId[_outgoingId!];
     if (outgoing == null) return live;
     return Stack(
@@ -170,7 +176,7 @@ class _ReadOverlayState extends ConsumerState<ReadOverlay>
           child: IgnorePointer(
             child: SlideTransition(
               position: _outSlide,
-              child: _body(outgoing, live: false),
+              child: _page(layout, outgoing, live: false),
             ),
           ),
         ),

@@ -40,7 +40,8 @@ class CanvasView extends ConsumerStatefulWidget {
   ConsumerState<CanvasView> createState() => _CanvasViewState();
 }
 
-class _CanvasViewState extends ConsumerState<CanvasView> {
+class _CanvasViewState extends ConsumerState<CanvasView>
+    with SingleTickerProviderStateMixin {
   final _viewport = CanvasViewport();
   String? _selectedId;
   CanvasViewMode _viewMode = CanvasViewMode.graph;
@@ -81,16 +82,29 @@ class _CanvasViewState extends ConsumerState<CanvasView> {
   Offset _lastFocal = Offset.zero;
   double _lastGestureScale = 1;
 
+  /// Glides the viewport between nodes during arrow / search navigation so the
+  /// selection appears to travel across the map instead of the view snapping to
+  /// it. Tweens [_navFrom] → [_navTo] (translation only, current scale held);
+  /// timed to match the reader's page-slide so the two views feel the same.
+  late final AnimationController _navAnim = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 260),
+  );
+  Offset? _navFrom;
+  Offset? _navTo;
+
   @override
   void initState() {
     super.initState();
     _db = ref.read(databaseProvider);
     _viewport.addListener(_onViewportChanged);
+    _navAnim.addListener(_onNavAnimTick);
   }
 
   @override
   void dispose() {
     _viewport.removeListener(_onViewportChanged);
+    _navAnim.dispose();
     if (_saveTimer?.isActive ?? false) {
       _persistState(); // flush the pending debounced write
     }
@@ -283,6 +297,7 @@ class _CanvasViewState extends ConsumerState<CanvasView> {
                     () => _PanZoomGestureRecognizer(debugOwner: this),
                     (instance) => instance
                       ..onStart = (details) {
+                        _stopNavAnim();
                         _lastFocal = details.localFocalPoint;
                         _lastGestureScale = 1;
                       }
@@ -334,6 +349,7 @@ class _CanvasViewState extends ConsumerState<CanvasView> {
           ?.layout
           .byId[_selectedId];
       if (cell != null) {
+        _stopNavAnim();
         _viewport.centerOn(CanvasMetrics.cellRect(cell).center, _viewSize);
       }
       // Reclaim keyboard focus from the fading-out reader.
@@ -541,9 +557,38 @@ class _CanvasViewState extends ConsumerState<CanvasView> {
     setState(() => _selectedId = id);
     final cell = layout.byId[id];
     if (cell != null) {
-      _viewport.ensureVisible(CanvasMetrics.cellRect(cell), _viewSize);
+      // Glide the map so the now-selected node travels to the centre, rather
+      // than snapping the view to it — the "node is moving" feel.
+      _animateCenterOn(CanvasMetrics.cellRect(cell).center);
     }
     _persistState();
+  }
+
+  /// Per-frame driver of the navigation glide: eased lerp of the viewport
+  /// translation from [_navFrom] to [_navTo].
+  void _onNavAnimTick() {
+    final from = _navFrom, to = _navTo;
+    if (from == null || to == null) return;
+    final t = Curves.easeOutCubic.transform(_navAnim.value);
+    _viewport.setTranslation(Offset.lerp(from, to, t)!);
+  }
+
+  /// Starts (or re-targets) the glide that ends with [canvasPoint] centred,
+  /// tweening from wherever the view sits now so a mid-flight navigation
+  /// redirects smoothly. A negligible move is skipped so a tap that doesn't
+  /// shift the map doesn't run a no-op animation.
+  void _animateCenterOn(Offset canvasPoint) {
+    final target = _viewport.translationToCenter(canvasPoint, _viewSize);
+    if ((target - _viewport.translation).distanceSquared < 0.25) return;
+    _navFrom = _viewport.translation;
+    _navTo = target;
+    _navAnim.forward(from: 0);
+  }
+
+  /// Cancels an in-flight navigation glide so a manual pan/zoom/fit isn't
+  /// fought by the tween writing translation back each frame.
+  void _stopNavAnim() {
+    if (_navAnim.isAnimating) _navAnim.stop();
   }
 
   void _navigate(TurnGridLayout layout, GridDirection direction) {
@@ -559,6 +604,7 @@ class _CanvasViewState extends ConsumerState<CanvasView> {
   }
 
   void _fit(TurnGridLayout layout) {
+    _stopNavAnim();
     _viewport.fitContent(CanvasMetrics.contentSize(layout), _viewSize);
   }
 
@@ -602,6 +648,7 @@ class _CanvasViewState extends ConsumerState<CanvasView> {
 
   void _onPointerSignal(PointerSignalEvent event) {
     if (event is! PointerScrollEvent) return;
+    _stopNavAnim();
     final keyboard = HardwareKeyboard.instance;
     if (keyboard.isMetaPressed || keyboard.isControlPressed) {
       // Cmd/Ctrl + scroll = zoom around the cursor (DESIGN.md §6).

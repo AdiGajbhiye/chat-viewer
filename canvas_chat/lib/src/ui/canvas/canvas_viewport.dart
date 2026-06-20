@@ -54,6 +54,21 @@ class CanvasViewport extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// The [translation] that would center [canvasPoint] in a view of [viewSize]
+  /// at the current scale — the destination an animated recenter tweens toward
+  /// (see [setTranslation]).
+  Offset translationToCenter(Offset canvasPoint, Size viewSize) =>
+      viewSize.center(Offset.zero) - canvasPoint * _scale;
+
+  /// Sets [translation] directly, leaving [scale] untouched, and notifies. Used
+  /// to drive an externally-animated pan (a per-frame [translationToCenter]
+  /// glide); plain pans should prefer [panBy]/[centerOn].
+  void setTranslation(Offset value) {
+    if (_translation == value) return;
+    _translation = value;
+    notifyListeners();
+  }
+
   /// Fits [contentSize] in the view (zoomed out at most to [minScale], in at
   /// most to 1:1), centered. Bound to double-tap and `f` (DESIGN.md §6).
   void fitContent(Size contentSize, Size viewSize) {

@@ -5,6 +5,7 @@ import 'package:canvas_chat/src/data/db/database.dart';
 import 'package:canvas_chat/src/data/import/chatgpt_importer.dart';
 import 'package:canvas_chat/src/data/import/export_source.dart';
 import 'package:canvas_chat/src/state/providers.dart';
+import 'package:canvas_chat/src/ui/canvas/canvas_view.dart';
 import 'package:canvas_chat/src/ui/canvas/node_card.dart';
 import 'package:canvas_chat/src/ui/read_view.dart';
 import 'package:drift/native.dart';
@@ -221,6 +222,37 @@ void main() {
       find.descendant(of: card, matching: find.byType(IconButton)),
       findsNothing,
     );
+
+    await unmountApp(tester);
+  });
+
+  testWidgets('arrow navigation glides the selected node to the centre',
+      (tester) async {
+    await seed(tester);
+    await tester.pumpWidget(app());
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Forked chat'));
+    await tester.pumpAndSettle();
+
+    // The viewport centre is the centre of the canvas pane.
+    final paneCentre = tester.getRect(find.byType(CanvasView)).center;
+
+    // ↑ to the parent, which opens off the top of the view.
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
+    await tester.pump(); // apply the selection and start the glide
+    await tester.pump(const Duration(milliseconds: 30));
+
+    // Mid-glide: the node is on its way but has not arrived — a snap would have
+    // it centred already. (This is the "node is moving" transition.)
+    final mid = tester.getRect(find.byWidget(selectedCard(tester))).center;
+    expect((mid - paneCentre).distance, greaterThan(8));
+
+    // Settled: the node has glided to the centre (not merely scrolled just
+    // into view, which is what the old ensureVisible pan did).
+    await tester.pumpAndSettle();
+    final settled = tester.getRect(find.byWidget(selectedCard(tester))).center;
+    expect(settled, offsetMoreOrLessEquals(paneCentre, epsilon: 1.0));
 
     await unmountApp(tester);
   });
