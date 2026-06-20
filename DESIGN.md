@@ -24,10 +24,12 @@ node has multiple children — the chain forks into a new column.
 ### Views
 
 A conversation has two views, switched by an icons-only toggle pinned
-bottom-right (graph · read) that stays visible in both. They cross-fade into
-each other in place (no pushed route). The current view is remembered per
-conversation in `canvas_state.mode`, but the reader is never *auto-restored* —
-opening a conversation always lands on the graph.
+bottom-right (graph · read) that stays visible in both. The graph is the
+backdrop; the reader floats over it as an inset card (no pushed route), so a
+margin of canvas stays visible around the reader and the toggle stays put. The
+current view is remembered per conversation in `canvas_state.mode`, but the
+reader is never *auto-restored* — opening a conversation always lands on the
+graph.
 
 - **Graph mode** — the broad canvas (the map). Nodes are collapsed to just the
   user query, laid out on a fixed grid (rows = turn order, columns = branch
@@ -288,8 +290,9 @@ adjacent lane nearest to the current row (sibling branches).
   markdown, LaTeX, syntax-highlighted code (copy button), and images.
   `thoughts`/`reasoning_recap` behind a 🧠 toggle. The transcript keeps a
   comfortable reading width (capped + centered) on a wide pane.
-- An inline view cross-faded with the graph (same on every platform), not a
-  pushed route — so the bottom-right toggle stays visible in both.
+- An inset card floating over the graph (same on every platform), not a pushed
+  route — so the map stays visible around it and the bottom-right toggle stays
+  put. Tapping the exposed canvas (or the graph toggle / Esc) returns to the map.
 - The read header carries the branch breadcrumb/counter and the reading-focus
   arrows; **↑/↓** walk the conversation like a transcript (this *is* the linear
   reading experience — no separate transcript view needed), **←/→** jump across
@@ -328,9 +331,10 @@ Custom canvas, not a package:
 - Edges in a single `CustomPainter` below the node layer.
 - Nodes are real widgets positioned by a `CustomMultiChildLayout`-style
   delegate using the grid; uniform cells make culling exact.
-- Read mode is an inline view cross-faded with the graph (no pushed route), so
-  the bottom-right toggle stays visible across both; the graph keeps its
-  viewport while hidden. Within the reader, turns slide directionally as the
+- Read mode is an inset card layered over the graph in a `Stack` (no pushed
+  route), behind a faint tap-to-dismiss scrim, so the map stays visible around
+  it and keeps its viewport; the graph is focus-excluded while reading so arrow
+  keys reach the reader. Within the reader, turns slide directionally as the
   focus pages.
 
 Evaluated alternatives: `graphview` (layout too rigid), flutter_flow-style node

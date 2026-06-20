@@ -283,12 +283,13 @@ void main() {
 
         await enterReadMode(tester);
 
-        // The reader fills the canvas pane (sidebar 320 + divider 1 →
-        // x ∈ [321, 800], y ∈ [0, 600] = 479×600) and replaces the graph in
-        // place — it is a view now, not an overlay floating over the canvas.
+        // The reader floats as a card inset by an 18px margin inside the canvas
+        // pane (sidebar 320 + divider 1 → 479×600), so it measures
+        // (479-36)×(600-36), and the graph stays visible behind it (node cards
+        // still in the tree).
         expect(find.byType(ReadOverlay), findsOneWidget);
-        expect(tester.getSize(find.byType(ReadOverlay)), const Size(479, 600));
-        expect(find.byType(NodeCard), findsNothing);
+        expect(tester.getSize(find.byType(ReadOverlay)), const Size(443, 564));
+        expect(find.byType(NodeCard), findsWidgets);
         expect(
           inOverlay(find.textContaining('edited v2', findRichText: true)),
           findsOneWidget,

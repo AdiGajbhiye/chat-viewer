@@ -137,13 +137,23 @@ class _CanvasViewState extends ConsumerState<CanvasView> {
         }
         return Stack(
           children: [
+            // The graph is always the backdrop, so a margin of canvas stays
+            // visible around the inset reader. Excluded from focus traversal
+            // while reading so arrow keys reach the reader, not the map behind.
+            Positioned.fill(
+              child: ExcludeFocus(
+                excluding: _viewMode == CanvasViewMode.read,
+                child: _buildGraph(context, layout),
+              ),
+            ),
+            // The reader floats over the graph as an inset card; it fades/scales
+            // in and the exposed canvas around it is tappable to return to the
+            // map.
             Positioned.fill(
               child: AnimatedSwitcher(
                 duration: const Duration(milliseconds: 220),
                 switchInCurve: Curves.easeOut,
                 switchOutCurve: Curves.easeIn,
-                // Fill the pane; the default centering layout would size each
-                // child to its own content instead.
                 layoutBuilder: (current, previous) => Stack(
                   fit: StackFit.expand,
                   children: [...previous, ?current],
@@ -156,18 +166,8 @@ class _CanvasViewState extends ConsumerState<CanvasView> {
                   ),
                 ),
                 child: _viewMode == CanvasViewMode.read
-                    ? ReadOverlay(
-                        key: ValueKey('read-$_readEpoch'),
-                        conversationId: widget.conversationId,
-                        initialTurnId:
-                            _selectedId ?? layout.cells.first.turn.id,
-                        onFocusChanged: _onReadFocusChanged,
-                        onMinimize: () => _setViewMode(CanvasViewMode.graph),
-                      )
-                    : KeyedSubtree(
-                        key: const ValueKey('graph'),
-                        child: _buildGraph(context, layout),
-                      ),
+                    ? _buildReader(context, layout)
+                    : const SizedBox.shrink(key: ValueKey('no-reader')),
               ),
             ),
             // Find-in-conversation is graph-only; the reader is navigated by
@@ -206,9 +206,50 @@ class _CanvasViewState extends ConsumerState<CanvasView> {
     );
   }
 
+  /// The reader floating over the graph: a faint, tap-to-dismiss scrim that
+  /// lifts the card off the canvas while keeping the map visible behind it, and
+  /// the reader itself as an inset, rounded, elevated card. Keyed by
+  /// [_readEpoch] so re-entering reseats it on the current selection.
+  Widget _buildReader(BuildContext context, TurnGridLayout layout) {
+    final scheme = Theme.of(context).colorScheme;
+    return Stack(
+      key: ValueKey('read-$_readEpoch'),
+      fit: StackFit.expand,
+      children: [
+        GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: () => _setViewMode(CanvasViewMode.graph),
+          child: ColoredBox(color: Colors.black.withValues(alpha: 0.18)),
+        ),
+        Padding(
+          // The margin that lets the canvas peek around the reader.
+          padding: const EdgeInsets.all(18),
+          child: GestureDetector(
+            // Swallow taps on the card so they don't fall through to the
+            // dismiss scrim; the reader's own gestures still win in the arena.
+            behavior: HitTestBehavior.opaque,
+            onTap: () {},
+            child: Material(
+              color: scheme.surface,
+              elevation: 6,
+              borderRadius: BorderRadius.circular(16),
+              clipBehavior: Clip.antiAlias,
+              child: ReadOverlay(
+                conversationId: widget.conversationId,
+                initialTurnId: _selectedId ?? layout.cells.first.turn.id,
+                onFocusChanged: _onReadFocusChanged,
+                onMinimize: () => _setViewMode(CanvasViewMode.graph),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
   /// The pannable/zoomable graph canvas with its arrow-key / `f`-to-fit
-  /// shortcuts and the pan-zoom gesture recognizer (extracted so the build
-  /// body can cross-fade it with the reader).
+  /// shortcuts and the pan-zoom gesture recognizer (extracted so the build body
+  /// can layer the reader over it).
   Widget _buildGraph(BuildContext context, TurnGridLayout layout) {
     return CallbackShortcuts(
       bindings: {
