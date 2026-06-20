@@ -2,14 +2,14 @@ import 'package:flutter/material.dart';
 
 import '../../domain/grid_layout.dart';
 
-/// Direction for grid navigation (quick buttons / arrow keys).
+/// Direction for grid navigation (arrow keys).
 enum GridDirection { up, down, left, right }
 
-/// Collapsed turn card for navigate mode (DESIGN.md §6 "Node card & quick
-/// buttons"): quick-button strip, the user query filling the card, and a meta
-/// line with time · model · fork count. The assistant reply is shown only in
-/// read mode. Uniform size — the parent positions it in a fixed
-/// [CanvasMetrics] cell.
+/// Collapsed turn card for navigate mode (DESIGN.md §6 "Node card"): the user
+/// query filling the card and a meta line with time · model · fork count.
+/// Tapping the card opens it in read mode; the assistant reply is shown only
+/// there. Uniform size — the parent positions it in a fixed [CanvasMetrics]
+/// cell.
 class NodeCard extends StatelessWidget {
   const NodeCard({
     super.key,
@@ -26,7 +26,7 @@ class NodeCard extends StatelessWidget {
   /// stand out even when off the active path.
   final bool matched;
 
-  /// Enter read mode for this turn (card tap or ⊕, DESIGN.md §6).
+  /// Enter read mode for this turn (tapping the card, DESIGN.md §6).
   final VoidCallback onMaximize;
 
   @override
@@ -64,12 +64,10 @@ class NodeCard extends StatelessWidget {
                 width: selected || matched ? 2 : 1,
               ),
             ),
-            padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
+            padding: const EdgeInsets.fromLTRB(14, 12, 14, 10),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _QuickButtonStrip(onMaximize: onMaximize),
-                const SizedBox(height: 4),
                 // The question fills the card (the assistant reply is read
                 // mode only — navigate mode stays a map of prompts).
                 Expanded(
@@ -114,56 +112,3 @@ class NodeCard extends StatelessWidget {
 
 String _collapseWhitespace(String text) =>
     text.replaceAll(RegExp(r'\s+'), ' ').trim();
-
-/// A single zoom button that maximizes the card into read mode (DESIGN.md
-/// §6). Navigate-mode selection moves via arrow keys / tapping cells, so the
-/// per-card arrow buttons were dropped to keep the map uncluttered.
-class _QuickButtonStrip extends StatelessWidget {
-  const _QuickButtonStrip({required this.onMaximize});
-
-  final VoidCallback onMaximize;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        _QuickButton(
-          icon: Icons.open_in_full,
-          tooltip: 'Maximize (read mode)',
-          onPressed: onMaximize,
-        ),
-      ],
-    );
-  }
-}
-
-class _QuickButton extends StatelessWidget {
-  const _QuickButton({
-    required this.icon,
-    required this.tooltip,
-    required this.onPressed,
-  });
-
-  final IconData icon;
-  final String tooltip;
-  final VoidCallback? onPressed;
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      width: 26,
-      height: 26,
-      child: IconButton(
-        icon: Icon(icon),
-        tooltip: tooltip,
-        onPressed: onPressed,
-        iconSize: 14,
-        padding: EdgeInsets.zero,
-        style: IconButton.styleFrom(
-          minimumSize: const Size(26, 26),
-          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-        ),
-      ),
-    );
-  }
-}

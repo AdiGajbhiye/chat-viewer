@@ -108,17 +108,11 @@ void main() {
       .widgetList<NodeCard>(find.byType(NodeCard))
       .singleWhere((card) => card.selected);
 
-  /// Taps [tooltip] inside the currently selected card, then waits out the
-  /// canvas double-tap detector's tap delay.
-  Future<void> tapSelectedCardButton(
-      WidgetTester tester, String tooltip) async {
-    await tester.tap(find.descendant(
-      of: find.byWidget(selectedCard(tester)),
-      matching: find.byTooltip(tooltip),
-    ));
-    // The canvas GestureDetector listens for double taps, which holds single
-    // taps in the gesture arena for kDoubleTapTimeout.
-    await tester.pump(const Duration(milliseconds: 350));
+  /// Enters read mode on the current selection via the bottom-right view
+  /// toggle. (The toggle sits outside the canvas gesture detector, so unlike a
+  /// card tap it needs no double-tap-timeout wait.)
+  Future<void> enterReadMode(WidgetTester tester) async {
+    await tester.tap(find.byTooltip('Read view'));
     await tester.pumpAndSettle();
   }
 
@@ -185,7 +179,7 @@ void main() {
     await unmountApp(tester);
   });
 
-  testWidgets('arrow keys move the selection; cards show only a zoom button',
+  testWidgets('arrow keys move the selection; cards carry no buttons',
       (tester) async {
     await seed(tester);
     await tester.pumpWidget(app());
@@ -219,31 +213,14 @@ void main() {
     await tester.pumpAndSettle();
     expect(selectedCard(tester).cell.turn.id, 'conv-forked:f-u3b');
 
-    // The navigate card carries a single quick button — the zoom/maximize
-    // control that enters read mode. The per-card nav arrows were removed (the
-    // map moves via arrow keys / tapping cells), so none are rendered.
+    // The navigate card carries no buttons at all: the map moves via arrow
+    // keys / tapping cells, and entering read mode is a card tap or the
+    // bottom-right toggle, so the per-card maximize button was dropped.
     final card = find.byWidget(selectedCard(tester));
     expect(
       find.descendant(of: card, matching: find.byType(IconButton)),
-      findsOneWidget,
+      findsNothing,
     );
-    final maximize = tester.widget<IconButton>(find.descendant(
-      of: card,
-      matching: find.widgetWithIcon(IconButton, Icons.open_in_full),
-    ));
-    expect(maximize.onPressed, isNotNull);
-    for (final icon in [
-      Icons.arrow_upward,
-      Icons.arrow_downward,
-      Icons.arrow_back,
-      Icons.arrow_forward,
-    ]) {
-      expect(
-        find.descendant(
-            of: card, matching: find.widgetWithIcon(IconButton, icon)),
-        findsNothing,
-      );
-    }
 
     await unmountApp(tester);
   });
@@ -304,7 +281,7 @@ void main() {
       try {
         await openForkedChat(tester);
 
-        await tapSelectedCardButton(tester, 'Maximize (read mode)');
+        await enterReadMode(tester);
 
         // The reader fills the canvas pane (sidebar 320 + divider 1 →
         // x ∈ [321, 800], y ∈ [0, 600] = 479×600) and replaces the graph in
@@ -344,7 +321,7 @@ void main() {
       tester.platformDispatcher.platformBrightnessTestValue = Brightness.dark;
       addTearDown(tester.platformDispatcher.clearPlatformBrightnessTestValue);
       await openForkedChat(tester);
-      await tapSelectedCardButton(tester, 'Maximize (read mode)');
+      await enterReadMode(tester);
 
       final onSurface = Theme.of(tester.element(find.byType(ReadOverlay)))
           .colorScheme
@@ -364,7 +341,7 @@ void main() {
         (tester) async {
       await openForkedChat(tester);
 
-      // Tapping the card body (not a quick button) enters read mode.
+      // Tapping a node card enters read mode for that turn.
       await tester.tap(find.textContaining('edited v2'));
       await tester.pump(const Duration(milliseconds: 350));
       await tester.pumpAndSettle();
@@ -403,8 +380,9 @@ void main() {
         findsOneWidget,
       );
 
-      // Minimize returns to navigate mode centered on the node just read.
-      await tester.tap(inOverlay(find.byTooltip('Minimize')));
+      // The bottom-right toggle returns to the graph centered on the node just
+      // read (the in-header minimize button was removed).
+      await tester.tap(find.byTooltip('Graph view'));
       await tester.pumpAndSettle();
       expect(find.byType(ReadOverlay), findsNothing);
       expect(selectedCard(tester).cell.turn.responseMd, 'first answer');
@@ -477,7 +455,7 @@ void main() {
     testWidgets('swipe up/down advances the reading focus', (tester) async {
       // The reader pages on a vertical overscroll past the transcript edge.
       await openForkedChat(tester);
-      await tapSelectedCardButton(tester, 'Maximize (read mode)');
+      await enterReadMode(tester);
       expect(find.byType(ReadOverlay), findsOneWidget);
       expect(
         inOverlay(find.textContaining('edited v2', findRichText: true)),
@@ -517,7 +495,7 @@ void main() {
     testWidgets('horizontal swipe pages across sibling branches',
         (tester) async {
       await openForkedChat(tester);
-      await tapSelectedCardButton(tester, 'Maximize (read mode)');
+      await enterReadMode(tester);
       expect(
         inOverlay(find.textContaining('edited v2', findRichText: true)),
         findsOneWidget,
@@ -553,7 +531,7 @@ void main() {
     testWidgets('selecting a conversation always opens navigate mode, '
         'even when it was last left in read mode', (tester) async {
       await openForkedChat(tester);
-      await tapSelectedCardButton(tester, 'Maximize (read mode)');
+      await enterReadMode(tester);
       expect(find.byType(ReadOverlay), findsOneWidget);
 
       // "Quit" with read mode open (so canvas_state persists mode='read'),

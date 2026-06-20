@@ -127,9 +127,8 @@ void main() {
       await tester.tap(find.text('Rich chat'));
       await tester.pumpAndSettle();
 
-      await tester.tap(find.byTooltip('Maximize (read mode)').first);
-      // The canvas double-tap detector holds single taps for kDoubleTapTimeout.
-      await tester.pump(const Duration(milliseconds: 350));
+      // Enter read mode via the bottom-right view toggle.
+      await tester.tap(find.byTooltip('Read view'));
       await tester.pumpAndSettle();
 
       // Read mode is open and the transcript — including the H1 that used to

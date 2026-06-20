@@ -147,7 +147,6 @@ class _ReadOverlayState extends ConsumerState<ReadOverlay>
                   cell: cell,
                   layout: layout,
                   onNavigate: (direction) => _go(cell, direction),
-                  onMinimize: widget.onMinimize ?? () {},
                 ),
                 const Divider(height: 1),
                 Expanded(child: _animatedBody(layout, cell)),
@@ -189,8 +188,15 @@ class _ReadOverlayState extends ConsumerState<ReadOverlay>
       // Keyed by turn so each turn gets a fresh scroll position (starts at top).
       key: ValueKey('read-body-${cell.turn.id}'),
       physics: const AlwaysScrollableScrollPhysics(),
-      padding: const EdgeInsets.all(20),
-      child: TurnBody(turn: cell.turn),
+      padding: const EdgeInsets.fromLTRB(28, 24, 28, 40),
+      // Cap the line length and center on a wide pane so the transcript keeps a
+      // comfortable reading width instead of running edge to edge.
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 760),
+          child: TurnBody(turn: cell.turn),
+        ),
+      ),
     );
     if (!live) return scroll;
     return NotificationListener<ScrollNotification>(
@@ -268,10 +274,10 @@ class _ReadOverlayState extends ConsumerState<ReadOverlay>
   }
 }
 
-/// Quick-button strip + breadcrumb (DESIGN.md §6 "the quick-button strip stays
-/// on top"): a single button minimizes back to the graph, and the arrows move
-/// the *reading focus*. Read mode shows no title — the transcript itself is the
-/// content, so the strip stays minimal.
+/// Breadcrumb + reading-focus arrows (DESIGN.md §6). Read mode shows no title —
+/// the transcript itself is the content, so the strip stays minimal; minimizing
+/// back to the graph is the bottom-right view toggle (or Esc), not a button
+/// here.
 @visibleForTesting
 class ReadHeader extends StatelessWidget {
   const ReadHeader({
@@ -279,13 +285,11 @@ class ReadHeader extends StatelessWidget {
     required this.cell,
     required this.layout,
     required this.onNavigate,
-    required this.onMinimize,
   });
 
   final GridCell cell;
   final TurnGridLayout layout;
   final ValueChanged<GridDirection> onNavigate;
-  final VoidCallback onMinimize;
 
   @override
   Widget build(BuildContext context) {
@@ -302,14 +306,9 @@ class ReadHeader extends StatelessWidget {
         ),
       ),
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        padding: const EdgeInsets.fromLTRB(16, 10, 12, 10),
         child: Row(
           children: [
-            IconButton(
-              tooltip: 'Minimize',
-              icon: const Icon(Icons.close_fullscreen),
-              onPressed: onMinimize,
-            ),
             // No title in read mode, but the breadcrumb and counter still live
             // inside one slack-absorbing region (right-aligned within it) so
             // the navigation arrows stay pinned to a fixed spot on the right —

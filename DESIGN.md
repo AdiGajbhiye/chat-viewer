@@ -40,29 +40,30 @@ opening a conversation always lands on the graph.
   turn taller than the screen scrolls; only an edge overscroll pages, so reading
   never fights paging. The axes never mix — no diagonal paging.
 
-Tapping a node (or the strip's **maximize**) opens the reader on that turn;
-**minimize** (⊖ / Esc) drops back to the graph centered on the turn just read.
-The focused turn is shared, so switching views keeps your place.
+Tapping a node (or the bottom-right **read** toggle) opens the reader on that
+turn; the **graph** toggle (or Esc) drops back to the graph centered on the
+turn just read. The focused turn is shared, so switching views keeps your place.
 
 ```
  NAVIGATE (grid of collapsed nodes)         READ (one node maximized)
  lane 0          lane 1                  ┌──────────────────────────────┐
- ┌────────────┐                          │ ⊖ ⊕   ↑ ↓ ← →               │
- │⊖⊕ ↑↓←→     │                          ├──────────────────────────────┤
- │"explain X" │                          │ ▸ "shorter pls"              │
+ ┌────────────┐                          │            ⑂ 1/2   ↑ ↓ ← →   │
+ │"explain X" │                          ├──────────────────────────────┤
+ │            │                          │ ▸ "shorter pls"              │
  └─────┬──────┘                          │──────────────────────────────│
  ┌─────┴──────┐  ┌────────────┐          │ Sure — X in one line:        │
  │"shorter pls│──│"compare X  │          │ X is …                       │
  └─────┬──────┘  │ with Y"    │          │                              │
  ┌─────┴──────┐  └────────────┘          │ ```code …```                 │
- │"thanks, now│                          │ (scrolls)                    │
+ │"thanks, now│                          │ (scrolls)            [▣ ☰]   │
  │ apply to…" │                          │                              │
  └────────────┘                          └──────────────────────────────┘
 ```
 
-Every node shows a quick-button strip on top: **minimize**, **maximize**
-(enter read mode), and **go to node above / below / left / right** (grid
-navigation).
+A node card is just the user query and a meta line; tapping it opens read mode.
+The read header carries the branch breadcrumb/counter and the **go to node
+above / below / left / right** arrows (move the reading focus). The view toggle
+(**▣ graph · ☰ read**) is pinned bottom-right in both views.
 
 ### One canvas per conversation
 
@@ -278,44 +279,42 @@ adjacent lane nearest to the current row (sibling branches).
   to fit. Viewport-culled: only visible cells build widgets.
 - Minimap (bottom-right, desktop always / mobile on-zoom) painted from grid
   cells — cheap because layout is just cells.
-- Tap a node (or its **maximize** button) → read mode for that node.
+- Tap a node → read mode for that node (or the bottom-right **read** toggle
+  opens it on the current selection).
 
 ### Read mode
 
 - The focused node maximized: full prompt + full response, scrollable, with
   markdown, LaTeX, syntax-highlighted code (copy button), and images.
-  `thoughts`/`reasoning_recap` behind a 🧠 toggle.
-- Presentation is platform-specific: **full-screen route on Android** (phones
-  need every pixel), **centered overlay (~85%) over the dimmed canvas on
-  macOS** (desktop keeps spatial context).
-- The quick-button strip stays on top; **↑/↓** walk the conversation like a
-  transcript (this *is* the linear reading experience — no separate transcript
-  view needed), **←/→** jump across branches at the same depth, with a brief
-  breadcrumb showing which branch you're on.
-- **Minimize** (or Esc / back) returns to navigate mode with the canvas
-  centered on the node just read.
-- macOS: arrow keys mirror the buttons; Android: swipe up/down also advances.
+  `thoughts`/`reasoning_recap` behind a 🧠 toggle. The transcript keeps a
+  comfortable reading width (capped + centered) on a wide pane.
+- An inline view cross-faded with the graph (same on every platform), not a
+  pushed route — so the bottom-right toggle stays visible in both.
+- The read header carries the branch breadcrumb/counter and the reading-focus
+  arrows; **↑/↓** walk the conversation like a transcript (this *is* the linear
+  reading experience — no separate transcript view needed), **←/→** jump across
+  branches at the same depth.
+- The **graph** toggle (or Esc) returns to the graph centered on the node just
+  read.
+- Arrow keys mirror the header arrows; a vertical swipe past the transcript edge
+  pages up/down and a horizontal swipe pages across branches (all platforms).
 
-### Node card & quick buttons
+### Node card
 
 ```
   navigate mode card (uniform size)
 ┌──────────────────────────────┐
-│ ⊖ ⊕            ↑ ↓ ← →      │   quick-button strip
-│──────────────────────────────│
-│ ▸ user query, max 2 lines…   │
+│ ▸ user query, max 8 lines…   │
+│                              │
 │ ⏱ Mar 12 · ◇ gpt-4o · ⑂2    │   meta: time, model, fork count
 └──────────────────────────────┘
 ```
 
-- Quick-button strip (both modes): **⊖ minimize** · **⊕ maximize** ·
-  **↑ ↓ ← →** go to neighbor. Buttons for nonexistent neighbors are disabled.
-  In navigate mode the arrows move the *selection* (and scroll it into view);
-  in read mode they move the *reading focus*.
+- The card is just the user query (the assistant reply is read mode only) plus
+  the meta line. It carries no buttons: tapping the card enters read mode, and
+  selection moves via arrow keys / tapping cells.
 - Exactly **two node states**: collapsed card (navigate) and maximized (read
-  mode). Maximize on a collapsed card enters read mode; minimize is a no-op in
-  navigate mode (shown disabled) and exits read mode. No in-between
-  "preview" size — the grid stays uniform.
+  mode). No in-between "preview" size — the grid stays uniform.
 - Markdown via `gpt_markdown` (handles ChatGPT-flavored markdown + LaTeX well;
   fallback `flutter_markdown` if it disappoints).
 
