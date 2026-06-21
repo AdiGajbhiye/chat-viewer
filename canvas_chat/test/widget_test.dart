@@ -455,6 +455,31 @@ void main() {
       await unmountApp(tester);
     });
 
+    testWidgets('a deliberate mouse drag pans the canvas instead of maximizing',
+        (tester) async {
+      await openForkedChat(tester);
+
+      // The other side of the slop from the drift test above: a drag past
+      // kTouchSlop (18px) must win the gesture arena as a canvas pan, so the
+      // card never maximizes and the whole graph slides under the pointer.
+      // Guards the pan/zoom hot path against a gesture-recognizer regression.
+      const card = ValueKey('node-conv-forked:f-u3b');
+      final before = tester.getCenter(find.byKey(card));
+      final gesture =
+          await tester.startGesture(before, kind: PointerDeviceKind.mouse);
+      await gesture.moveBy(const Offset(30, 20));
+      await gesture.moveBy(const Offset(30, 20)); // 60×40 total — well past slop
+      await gesture.up();
+      await tester.pumpAndSettle();
+
+      expect(find.byType(ReadOverlay), findsNothing);
+      final after = tester.getCenter(find.byKey(card));
+      expect(after.dx - before.dx, greaterThan(18));
+      expect(after.dy - before.dy, greaterThan(10));
+
+      await unmountApp(tester);
+    });
+
     testWidgets('focus and viewport persist per conversation and restore',
         (tester) async {
       await openForkedChat(tester);

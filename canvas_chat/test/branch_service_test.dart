@@ -39,6 +39,39 @@ class _GatedProvider implements LlmProvider {
   }
 }
 
+/// Yields the given deltas in order — a multi-chunk stream, so a test can
+/// assert the response is the *accumulation* of every delta and catch a
+/// write-batching change that dropped or reordered chunks.
+class _ChunkedProvider implements LlmProvider {
+  _ChunkedProvider(this.deltas);
+
+  final List<String> deltas;
+
+  @override
+  Stream<String> generate({
+    required String prompt,
+    required List<Turn> context,
+  }) async* {
+    for (final delta in deltas) {
+      yield delta;
+    }
+  }
+}
+
+/// Yields one delta, then throws — exercising the failure seam in
+/// [BranchService] (the partial response is replaced with an error and the
+/// in-flight flag is cleared in `finally`).
+class _ThrowingProvider implements LlmProvider {
+  @override
+  Stream<String> generate({
+    required String prompt,
+    required List<Turn> context,
+  }) async* {
+    yield 'half';
+    throw Exception('boom');
+  }
+}
+
 Future<Turn> _insertTurn(
   AppDatabase db, {
   required String id,
@@ -145,6 +178,47 @@ void main() {
     // Once the stream completes, the id is cleared.
     gate.complete();
     await branch.done;
+    expect(container.read(generatingTurnsProvider), isNot(contains(branch.id)));
+  });
+
+  test('accumulates every streamed delta into the response', () async {
+    // Guards a future write-batching/debounce optimization: however the deltas
+    // are flushed, the persisted response is their full in-order concatenation.
+    final parent = await _insertTurn(db, id: 'c:p');
+    final service = BranchService(db, _ChunkedProvider(['Hel', 'lo, ', 'world']));
+
+    final branch = await service.branchFrom(parent: parent, prompt: 'hi');
+    await branch.done;
+
+    final row =
+        await (db.select(db.turns)..where((t) => t.id.equals(branch.id)))
+            .getSingle();
+    expect(row.responseMd, 'Hello, world');
+  });
+
+  test('a provider failure is written into the turn and clears generating',
+      () async {
+    final container = ProviderContainer(overrides: [
+      databaseProvider.overrideWithValue(db),
+      llmProviderProvider.overrideWithValue(_ThrowingProvider()),
+    ]);
+    addTearDown(container.dispose);
+    final parent = await _insertTurn(db, id: 'c:p');
+
+    final branch = await container
+        .read(branchServiceProvider)
+        .branchFrom(parent: parent, prompt: 'go');
+    await branch.done;
+
+    final row =
+        await (db.select(db.turns)..where((t) => t.id.equals(branch.id)))
+            .getSingle();
+    // The half-streamed text is replaced by the error, not left as a partial
+    // answer masquerading as a complete one.
+    expect(row.responseMd, contains('Generation failed'));
+    expect(row.responseMd, isNot(contains('half')));
+    // `finally` must clear the marker even on error, or the reader shows
+    // "Generating…" forever.
     expect(container.read(generatingTurnsProvider), isNot(contains(branch.id)));
   });
 }
