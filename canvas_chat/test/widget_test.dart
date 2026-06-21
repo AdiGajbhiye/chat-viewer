@@ -520,7 +520,7 @@ void main() {
         inOverlay(find.textContaining('edited v2', findRichText: true)),
         findsOneWidget,
       );
-      final body = inOverlay(find.byType(SingleChildScrollView));
+      final body = inOverlay(find.byType(ListView));
 
       // Swipe down past the top edge → previous turn.
       await tester.drag(body, const Offset(0, 250));

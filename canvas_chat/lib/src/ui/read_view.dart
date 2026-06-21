@@ -213,29 +213,27 @@ class _ReadOverlayState extends ConsumerState<ReadOverlay>
   /// One turn's scrollable transcript. The [live] one also watches for an
   /// overscroll past its edges to page up/down; the outgoing snapshot doesn't.
   Widget _body(GridCell cell, {required bool live}) {
-    final scroll = SingleChildScrollView(
-      // Keyed by turn so each turn gets a fresh scroll position (starts at top).
-      key: ValueKey('read-body-${cell.turn.id}'),
-      physics: const AlwaysScrollableScrollPhysics(),
-      padding: const EdgeInsets.fromLTRB(28, 24, 28, 40),
-      // Cap the line length and center on a wide pane so the transcript keeps a
-      // comfortable reading width instead of running edge to edge.
-      child: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 760),
+    // Cap the line length and center on a wide pane so the transcript keeps a
+    // comfortable reading width instead of running edge to edge. TurnBody is the
+    // scrollable (a lazy ListView), so a long transcript lays out only the
+    // on-screen chunks (DESIGN.md §6 "Performance").
+    final body = Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 760),
+        child: TurnBody(
+          // Keyed by turn so each turn gets a fresh scroll position (top).
+          key: ValueKey('read-body-${cell.turn.id}'),
+          turn: cell.turn,
           // Only the live page is interactive; the outgoing snapshot mid-slide
           // can't fork branches.
-          child: TurnBody(
-            turn: cell.turn,
-            onBranched: live ? _onBranchCreated : null,
-          ),
+          onBranched: live ? _onBranchCreated : null,
         ),
       ),
     );
-    if (!live) return scroll;
+    if (!live) return body;
     return NotificationListener<ScrollNotification>(
       onNotification: (notification) => _onScroll(notification, cell),
-      child: scroll,
+      child: body,
     );
   }
 
@@ -473,8 +471,14 @@ class TurnBody extends ConsumerWidget {
     final response = stripChatMarkers(turn.responseMd);
     final thoughts =
         turn.thoughtsMd == null ? null : stripChatMarkers(turn.thoughtsMd!);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
+    return ListView(
+      // TurnBody is the reader's scrollable. A lazy ListView lays out only the
+      // on-screen transcript pieces, so paging to a long turn no longer lays the
+      // whole thing out up front (DESIGN.md §6 "Performance"). The chunks are
+      // flattened into this list (not nested in a Column) so each lays out only
+      // when scrolled into view.
+      padding: const EdgeInsets.fromLTRB(28, 24, 28, 40),
+      physics: const AlwaysScrollableScrollPhysics(),
       children: [
         if (prompt.isNotEmpty)
           Card.filled(
@@ -522,10 +526,11 @@ class TurnBody extends ConsumerWidget {
                   style: TextStyle(color: theme.colorScheme.outline),
                 )
         else ...[
-          _ChunkedResponse(
+          ..._responseChunks(
             markdown: response,
             assetsByPointer: assetsByPointer,
             onAction: onChunkAction,
+            style: TextStyle(color: theme.colorScheme.onSurface),
           ),
           if (generating) ...[
             const SizedBox(height: 12),
@@ -678,49 +683,38 @@ class _MarkdownWithAssets extends StatelessWidget {
 enum ChunkAction { ask, explain, expand, copy }
 
 /// The assistant response, split into block-level chunks (paragraphs, lists,
-/// code fences — [splitMarkdownBlocks]) interleaved with [AssetBlock]s. Each
-/// text chunk carries its own hover toolbar so any passage can be asked about,
-/// explained, expanded, or copied without leaving the reader.
-class _ChunkedResponse extends StatelessWidget {
-  const _ChunkedResponse({
-    required this.markdown,
-    required this.assetsByPointer,
-    required this.onAction,
-  });
+/// code fences — [splitMarkdownBlocks]) interleaved with [AssetBlock]s, returned
+/// as a flat list of widgets. Flat (not wrapped in a Column) so the reader's
+/// [ListView] lays out only the on-screen chunks — paging to a long turn no
+/// longer lays the whole transcript out at once. Each text chunk carries its own
+/// hover toolbar so any passage can be asked about, explained, expanded, or
+/// copied without leaving the reader. [style] pins the color to onSurface
+/// because GptMarkdown spans don't inherit the ambient DefaultTextStyle color.
+List<Widget> _responseChunks({
+  required String markdown,
+  required Map<String, TurnAsset>? assetsByPointer,
+  required void Function(ChunkAction action, String chunk) onAction,
+  required TextStyle style,
+}) {
+  final children = <Widget>[];
 
-  final String markdown;
-  final Map<String, TurnAsset>? assetsByPointer;
-  final void Function(ChunkAction action, String chunk) onAction;
-
-  @override
-  Widget build(BuildContext context) {
-    // Pin the color to onSurface for the same reason _MarkdownWithAssets does:
-    // GptMarkdown spans don't inherit the ambient DefaultTextStyle color.
-    final style = TextStyle(color: Theme.of(context).colorScheme.onSurface);
-    final children = <Widget>[];
-
-    void addBlocks(String md) {
-      for (final block in splitMarkdownBlocks(md)) {
-        children.add(
-          _ResponseChunk(markdown: block, style: style, onAction: onAction),
-        );
-      }
+  void addBlocks(String md) {
+    for (final block in splitMarkdownBlocks(md)) {
+      children.add(
+        _ResponseChunk(markdown: block, style: style, onAction: onAction),
+      );
     }
-
-    var start = 0;
-    for (final match in _kAssetMarker.allMatches(markdown)) {
-      addBlocks(markdown.substring(start, match.start));
-      children.add(AssetBlock(asset: assetsByPointer?[match.group(1)!]));
-      start = match.end;
-    }
-    addBlocks(markdown.substring(start));
-
-    if (children.isEmpty) return const SizedBox.shrink();
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: children,
-    );
   }
+
+  var start = 0;
+  for (final match in _kAssetMarker.allMatches(markdown)) {
+    addBlocks(markdown.substring(start, match.start));
+    children.add(AssetBlock(asset: assetsByPointer?[match.group(1)!]));
+    start = match.end;
+  }
+  addBlocks(markdown.substring(start));
+
+  return children;
 }
 
 /// One response chunk: its markdown plus a top-right toolbar that fades in on

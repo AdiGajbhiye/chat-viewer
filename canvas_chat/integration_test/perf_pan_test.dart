@@ -51,18 +51,23 @@ Map<String, dynamic> bigConversation({int mainTurns = 200, int forkEvery = 5}) {
         'motivation, the main alternatives and their consequences, so the '
         'collapsed card body has realistic multi-line text to lay out, collapse '
         'and ellipsize across its full eight-line height.';
-    final response = '## Answer $tag\n\n'
-        'A fairly long explanatory paragraph about subject ${tag % 23} that goes '
-        'into real detail, continuing across several sentences so the reader has '
-        'non-trivial markdown to lay out when paging between turns.\n\n'
-        '- First consideration, described at enough length that it wraps.\n'
-        '- Second consideration, also wordy enough to wrap across lines.\n'
-        '- Third consideration to round out the list.\n\n'
-        'A code block:\n\n'
-        '```dart\nvoid example$tag() {\n  for (var i = 0; i < 12; i++) {\n'
-        '    print("row \$i of $tag");\n  }\n}\n```\n\n'
-        'A closing paragraph summarizing the above with extra detail so the '
-        'rendered transcript is genuinely tall and exercises markdown layout.';
+    // Several sections so a turn's transcript is much taller than the reader
+    // viewport — that's what makes lazy chunk layout matter (only the on-screen
+    // chunks should lay out on a page change).
+    final response = [
+      for (var s = 1; s <= 4; s++)
+        '## Section $s of answer $tag\n\n'
+            'A fairly long explanatory paragraph about subject ${tag % 23}, '
+            'section $s, continuing across several sentences so the reader has '
+            'non-trivial markdown to lay out when paging between turns.\n\n'
+            '- First consideration, described at enough length that it wraps.\n'
+            '- Second consideration, also wordy enough to wrap across lines.\n'
+            '- Third consideration to round out the list.\n\n'
+            '```dart\nvoid example${tag}_$s() {\n  for (var i = 0; i < 12; i++) {\n'
+            '    print("row \$i of $tag section $s");\n  }\n}\n```\n\n'
+            'A closing paragraph for section $s with extra detail so the '
+            'rendered transcript is genuinely tall and exercises markdown layout.'
+    ].join('\n\n');
     nodes.add(node(u,
         parent: parent,
         message: message(u, role: 'user', parts: [prompt], time: time++)));

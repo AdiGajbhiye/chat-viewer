@@ -14,6 +14,17 @@ shortcuts, Android input, import warnings).
 
 ## Log
 
+- 2026-06-21 · perf fix · read-mode lazy transcript. The reader rendered the
+  whole turn eagerly (a `SingleChildScrollView` + Column of every response
+  chunk), so paging to a long turn laid it all out at once — the arrow-key hitch
+  in big conversations. The transcript is now a lazy `ListView` with the chunks
+  flattened into it (`read_view.dart`), laying out only the on-screen chunks.
+  Trace (same tall 4-section turns), eager → lazy: worst frame build 61 → 38 ms,
+  UI GC 14 → 6 ms; steady-state ~2 ms. analyze clean; widget + chunk-toolbar +
+  read-mode integration tests pass. (Also fixed a pre-existing chunk_toolbar_test
+  bug — it didn't override `sharedPreferencesProvider`, so the fork path threw.
+  reader_view_test fails identically on committed code — a macOS "Failed to
+  foreground app" env flake — so unrelated to this change.)
 - 2026-06-21 · perf fix · node-layer decouple (the big one). Edges + each card
   are built once behind a `RepaintBoundary` and passed as the `ListenableBuilder`
   child, so only the viewport `Transform` rebuilds per pan/zoom tick; culling is

@@ -380,6 +380,13 @@ Fixes, by impact (✓ = landed):
 4. ✓ Isolate `EdgePainter` behind a `RepaintBoundary` with a stable cull rect
    (folded into fix 1) — it no longer repaints during a pan.
 
+**Read mode** has a separate per-navigation cost: paging to a turn lays out its
+incoming markdown. The transcript is a lazy `ListView` (`read_view.dart`) with
+the response chunks flattened into it, so a long turn lays out only its on-screen
+chunks instead of the whole thing up front. Same-data trace on tall (4-section)
+turns, eager → lazy: worst frame build 61 → 38 ms, UI GC 14 → 6 ms (the residual
+first-open spike is one-time engine/font warmup).
+
 ### Sidebar / home
 
 - Conversation list: virtualized, sorted by `update_time`, FTS search over
