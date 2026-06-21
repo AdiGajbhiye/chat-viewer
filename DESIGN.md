@@ -341,6 +341,35 @@ Evaluated alternatives: `graphview` (layout too rigid), flutter_flow-style node
 editors (free-form, wrong model). A fixed grid + two modes is small enough to
 own.
 
+### Performance
+
+The canvas is **redraw-on-tick**: pan, zoom and the nav-glide all call
+`CanvasViewport.notifyListeners()` → the `ListenableBuilder` around
+`_buildCanvas()` rebuilds *and* repaints the whole node layer every frame (no
+`RepaintBoundary` anywhere), so cost scales with visible-card count — which is
+what makes a large, fitted graph stutter.
+
+Profiled on real macOS/Impeller (debug frame times are meaningless) with the
+harness at `integration_test/perf_pan_test.dart` + `test_driver/perf_driver.dart`
+(`flutter drive --profile --driver=test_driver/perf_driver.dart
+--target=integration_test/perf_pan_test.dart -d macos` →
+`build/perf/*.timeline_summary.json`). Panning a ~440-node graph fitted to ~180
+cards is **UI-thread (build) bound**:
+
+- Frame build worst **51 ms** (≈20 fps), 2 of 8 frames over the 16 ms budget,
+  plus 22.9 ms of GC.
+- **~1,378 `Dart_StringToUTF8`/paint** — each `NodeCard` re-runs the
+  `_collapseWhitespace(stripChatMarkers(promptMd))` RegExp and re-shapes its
+  text every frame though nothing changed (`node_card.dart`).
+- **~181 `Canvas::saveLayer`/paint** — the `Opacity(0.6)` dim per off-path card;
+  cheap at fit-zoom but `saveLayer` cost grows with pixel area at normal zoom.
+
+Planned fixes, by impact: (1) build cards once per layout/selection/search change
+and apply the viewport as a `Transform` over a `RepaintBoundary`'d subtree (pan =
+re-composite, not rebuild+repaint); (2) drop `Opacity`, folding the dim into the
+card colors; (3) precompute the collapsed prompt string off the frame path;
+(4) isolate `EdgePainter` behind its own `RepaintBoundary`.
+
 ### Sidebar / home
 
 - Conversation list: virtualized, sorted by `update_time`, FTS search over
