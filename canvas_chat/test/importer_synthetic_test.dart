@@ -73,6 +73,9 @@ void main() {
       expect(conv.title, 'Linear chat');
       expect(conv.createTime, 1700000000500);
       expect(conv.updateTime, 1700000400500);
+      // Derived from the latest turn (u3 @ 1700000200), not the header's later
+      // update_time — this is what the sidebar orders and dates by.
+      expect(conv.lastMessageAt, 1700000200000);
       expect(conv.defaultModelSlug, 'gpt-4o');
       expect(conv.currentTurnId, 'conv-linear:u1');
       expect(conv.source, 'chatgpt_export');

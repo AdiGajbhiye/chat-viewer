@@ -50,6 +50,17 @@ class $ConversationsTable extends Conversations
     type: DriftSqlType.int,
     requiredDuringInsert: false,
   );
+  static const VerificationMeta _lastMessageAtMeta = const VerificationMeta(
+    'lastMessageAt',
+  );
+  @override
+  late final GeneratedColumn<int> lastMessageAt = GeneratedColumn<int>(
+    'last_message_at',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
   static const VerificationMeta _isArchivedMeta = const VerificationMeta(
     'isArchived',
   );
@@ -117,6 +128,7 @@ class $ConversationsTable extends Conversations
     title,
     createTime,
     updateTime,
+    lastMessageAt,
     isArchived,
     isStarred,
     defaultModelSlug,
@@ -156,6 +168,15 @@ class $ConversationsTable extends Conversations
       context.handle(
         _updateTimeMeta,
         updateTime.isAcceptableOrUnknown(data['update_time']!, _updateTimeMeta),
+      );
+    }
+    if (data.containsKey('last_message_at')) {
+      context.handle(
+        _lastMessageAtMeta,
+        lastMessageAt.isAcceptableOrUnknown(
+          data['last_message_at']!,
+          _lastMessageAtMeta,
+        ),
       );
     }
     if (data.containsKey('is_archived')) {
@@ -221,6 +242,10 @@ class $ConversationsTable extends Conversations
         DriftSqlType.int,
         data['${effectivePrefix}update_time'],
       ),
+      lastMessageAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}last_message_at'],
+      ),
       isArchived: attachedDatabase.typeMapping.read(
         DriftSqlType.bool,
         data['${effectivePrefix}is_archived'],
@@ -258,6 +283,14 @@ class Conversation extends DataClass implements Insertable<Conversation> {
   /// Milliseconds since epoch (export floats are converted on import).
   final int? createTime;
   final int? updateTime;
+
+  /// Milliseconds since epoch of the conversation's most recent message
+  /// (`MAX` of its turns' `create_time`). The export's `update_time` is bumped
+  /// by server-side touches unrelated to messages — a bulk migration can stamp
+  /// a years-old conversation as "today" — so it is unreliable for "when did
+  /// this happen". This derived value drives sidebar ordering and the shown
+  /// date instead; NULL when no turn carries a timestamp.
+  final int? lastMessageAt;
   final bool isArchived;
   final bool isStarred;
   final String? defaultModelSlug;
@@ -272,6 +305,7 @@ class Conversation extends DataClass implements Insertable<Conversation> {
     required this.title,
     this.createTime,
     this.updateTime,
+    this.lastMessageAt,
     required this.isArchived,
     required this.isStarred,
     this.defaultModelSlug,
@@ -288,6 +322,9 @@ class Conversation extends DataClass implements Insertable<Conversation> {
     }
     if (!nullToAbsent || updateTime != null) {
       map['update_time'] = Variable<int>(updateTime);
+    }
+    if (!nullToAbsent || lastMessageAt != null) {
+      map['last_message_at'] = Variable<int>(lastMessageAt);
     }
     map['is_archived'] = Variable<bool>(isArchived);
     map['is_starred'] = Variable<bool>(isStarred);
@@ -311,6 +348,9 @@ class Conversation extends DataClass implements Insertable<Conversation> {
       updateTime: updateTime == null && nullToAbsent
           ? const Value.absent()
           : Value(updateTime),
+      lastMessageAt: lastMessageAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(lastMessageAt),
       isArchived: Value(isArchived),
       isStarred: Value(isStarred),
       defaultModelSlug: defaultModelSlug == null && nullToAbsent
@@ -333,6 +373,7 @@ class Conversation extends DataClass implements Insertable<Conversation> {
       title: serializer.fromJson<String>(json['title']),
       createTime: serializer.fromJson<int?>(json['createTime']),
       updateTime: serializer.fromJson<int?>(json['updateTime']),
+      lastMessageAt: serializer.fromJson<int?>(json['lastMessageAt']),
       isArchived: serializer.fromJson<bool>(json['isArchived']),
       isStarred: serializer.fromJson<bool>(json['isStarred']),
       defaultModelSlug: serializer.fromJson<String?>(json['defaultModelSlug']),
@@ -348,6 +389,7 @@ class Conversation extends DataClass implements Insertable<Conversation> {
       'title': serializer.toJson<String>(title),
       'createTime': serializer.toJson<int?>(createTime),
       'updateTime': serializer.toJson<int?>(updateTime),
+      'lastMessageAt': serializer.toJson<int?>(lastMessageAt),
       'isArchived': serializer.toJson<bool>(isArchived),
       'isStarred': serializer.toJson<bool>(isStarred),
       'defaultModelSlug': serializer.toJson<String?>(defaultModelSlug),
@@ -361,6 +403,7 @@ class Conversation extends DataClass implements Insertable<Conversation> {
     String? title,
     Value<int?> createTime = const Value.absent(),
     Value<int?> updateTime = const Value.absent(),
+    Value<int?> lastMessageAt = const Value.absent(),
     bool? isArchived,
     bool? isStarred,
     Value<String?> defaultModelSlug = const Value.absent(),
@@ -371,6 +414,9 @@ class Conversation extends DataClass implements Insertable<Conversation> {
     title: title ?? this.title,
     createTime: createTime.present ? createTime.value : this.createTime,
     updateTime: updateTime.present ? updateTime.value : this.updateTime,
+    lastMessageAt: lastMessageAt.present
+        ? lastMessageAt.value
+        : this.lastMessageAt,
     isArchived: isArchived ?? this.isArchived,
     isStarred: isStarred ?? this.isStarred,
     defaultModelSlug: defaultModelSlug.present
@@ -391,6 +437,9 @@ class Conversation extends DataClass implements Insertable<Conversation> {
       updateTime: data.updateTime.present
           ? data.updateTime.value
           : this.updateTime,
+      lastMessageAt: data.lastMessageAt.present
+          ? data.lastMessageAt.value
+          : this.lastMessageAt,
       isArchived: data.isArchived.present
           ? data.isArchived.value
           : this.isArchived,
@@ -412,6 +461,7 @@ class Conversation extends DataClass implements Insertable<Conversation> {
           ..write('title: $title, ')
           ..write('createTime: $createTime, ')
           ..write('updateTime: $updateTime, ')
+          ..write('lastMessageAt: $lastMessageAt, ')
           ..write('isArchived: $isArchived, ')
           ..write('isStarred: $isStarred, ')
           ..write('defaultModelSlug: $defaultModelSlug, ')
@@ -427,6 +477,7 @@ class Conversation extends DataClass implements Insertable<Conversation> {
     title,
     createTime,
     updateTime,
+    lastMessageAt,
     isArchived,
     isStarred,
     defaultModelSlug,
@@ -441,6 +492,7 @@ class Conversation extends DataClass implements Insertable<Conversation> {
           other.title == this.title &&
           other.createTime == this.createTime &&
           other.updateTime == this.updateTime &&
+          other.lastMessageAt == this.lastMessageAt &&
           other.isArchived == this.isArchived &&
           other.isStarred == this.isStarred &&
           other.defaultModelSlug == this.defaultModelSlug &&
@@ -453,6 +505,7 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
   final Value<String> title;
   final Value<int?> createTime;
   final Value<int?> updateTime;
+  final Value<int?> lastMessageAt;
   final Value<bool> isArchived;
   final Value<bool> isStarred;
   final Value<String?> defaultModelSlug;
@@ -464,6 +517,7 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
     this.title = const Value.absent(),
     this.createTime = const Value.absent(),
     this.updateTime = const Value.absent(),
+    this.lastMessageAt = const Value.absent(),
     this.isArchived = const Value.absent(),
     this.isStarred = const Value.absent(),
     this.defaultModelSlug = const Value.absent(),
@@ -476,6 +530,7 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
     this.title = const Value.absent(),
     this.createTime = const Value.absent(),
     this.updateTime = const Value.absent(),
+    this.lastMessageAt = const Value.absent(),
     this.isArchived = const Value.absent(),
     this.isStarred = const Value.absent(),
     this.defaultModelSlug = const Value.absent(),
@@ -489,6 +544,7 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
     Expression<String>? title,
     Expression<int>? createTime,
     Expression<int>? updateTime,
+    Expression<int>? lastMessageAt,
     Expression<bool>? isArchived,
     Expression<bool>? isStarred,
     Expression<String>? defaultModelSlug,
@@ -501,6 +557,7 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
       if (title != null) 'title': title,
       if (createTime != null) 'create_time': createTime,
       if (updateTime != null) 'update_time': updateTime,
+      if (lastMessageAt != null) 'last_message_at': lastMessageAt,
       if (isArchived != null) 'is_archived': isArchived,
       if (isStarred != null) 'is_starred': isStarred,
       if (defaultModelSlug != null) 'default_model_slug': defaultModelSlug,
@@ -515,6 +572,7 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
     Value<String>? title,
     Value<int?>? createTime,
     Value<int?>? updateTime,
+    Value<int?>? lastMessageAt,
     Value<bool>? isArchived,
     Value<bool>? isStarred,
     Value<String?>? defaultModelSlug,
@@ -527,6 +585,7 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
       title: title ?? this.title,
       createTime: createTime ?? this.createTime,
       updateTime: updateTime ?? this.updateTime,
+      lastMessageAt: lastMessageAt ?? this.lastMessageAt,
       isArchived: isArchived ?? this.isArchived,
       isStarred: isStarred ?? this.isStarred,
       defaultModelSlug: defaultModelSlug ?? this.defaultModelSlug,
@@ -550,6 +609,9 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
     }
     if (updateTime.present) {
       map['update_time'] = Variable<int>(updateTime.value);
+    }
+    if (lastMessageAt.present) {
+      map['last_message_at'] = Variable<int>(lastMessageAt.value);
     }
     if (isArchived.present) {
       map['is_archived'] = Variable<bool>(isArchived.value);
@@ -579,6 +641,7 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
           ..write('title: $title, ')
           ..write('createTime: $createTime, ')
           ..write('updateTime: $updateTime, ')
+          ..write('lastMessageAt: $lastMessageAt, ')
           ..write('isArchived: $isArchived, ')
           ..write('isStarred: $isStarred, ')
           ..write('defaultModelSlug: $defaultModelSlug, ')
@@ -839,7 +902,9 @@ class $TurnsTable extends Turns with TableInfo<$TurnsTable, Turn> {
 }
 
 class Turn extends DataClass implements Insertable<Turn> {
-  /// Id of the turn's starting message node.
+  /// `<conversation_id>:<node_id>` where `node_id` is the turn's starting
+  /// message node. The conversation prefix is required because real exports
+  /// contain server-side conversation copies that reuse node ids.
   final String id;
   final String conversationId;
 
@@ -2423,6 +2488,7 @@ typedef $$ConversationsTableCreateCompanionBuilder =
       Value<String> title,
       Value<int?> createTime,
       Value<int?> updateTime,
+      Value<int?> lastMessageAt,
       Value<bool> isArchived,
       Value<bool> isStarred,
       Value<String?> defaultModelSlug,
@@ -2436,6 +2502,7 @@ typedef $$ConversationsTableUpdateCompanionBuilder =
       Value<String> title,
       Value<int?> createTime,
       Value<int?> updateTime,
+      Value<int?> lastMessageAt,
       Value<bool> isArchived,
       Value<bool> isStarred,
       Value<String?> defaultModelSlug,
@@ -2501,6 +2568,11 @@ class $$ConversationsTableFilterComposer
 
   ColumnFilters<int> get updateTime => $composableBuilder(
     column: $table.updateTime,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get lastMessageAt => $composableBuilder(
+    column: $table.lastMessageAt,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -2584,6 +2656,11 @@ class $$ConversationsTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<int> get lastMessageAt => $composableBuilder(
+    column: $table.lastMessageAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<bool> get isArchived => $composableBuilder(
     column: $table.isArchived,
     builder: (column) => ColumnOrderings(column),
@@ -2632,6 +2709,11 @@ class $$ConversationsTableAnnotationComposer
 
   GeneratedColumn<int> get updateTime => $composableBuilder(
     column: $table.updateTime,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get lastMessageAt => $composableBuilder(
+    column: $table.lastMessageAt,
     builder: (column) => column,
   );
 
@@ -2714,6 +2796,7 @@ class $$ConversationsTableTableManager
                 Value<String> title = const Value.absent(),
                 Value<int?> createTime = const Value.absent(),
                 Value<int?> updateTime = const Value.absent(),
+                Value<int?> lastMessageAt = const Value.absent(),
                 Value<bool> isArchived = const Value.absent(),
                 Value<bool> isStarred = const Value.absent(),
                 Value<String?> defaultModelSlug = const Value.absent(),
@@ -2725,6 +2808,7 @@ class $$ConversationsTableTableManager
                 title: title,
                 createTime: createTime,
                 updateTime: updateTime,
+                lastMessageAt: lastMessageAt,
                 isArchived: isArchived,
                 isStarred: isStarred,
                 defaultModelSlug: defaultModelSlug,
@@ -2738,6 +2822,7 @@ class $$ConversationsTableTableManager
                 Value<String> title = const Value.absent(),
                 Value<int?> createTime = const Value.absent(),
                 Value<int?> updateTime = const Value.absent(),
+                Value<int?> lastMessageAt = const Value.absent(),
                 Value<bool> isArchived = const Value.absent(),
                 Value<bool> isStarred = const Value.absent(),
                 Value<String?> defaultModelSlug = const Value.absent(),
@@ -2749,6 +2834,7 @@ class $$ConversationsTableTableManager
                 title: title,
                 createTime: createTime,
                 updateTime: updateTime,
+                lastMessageAt: lastMessageAt,
                 isArchived: isArchived,
                 isStarred: isStarred,
                 defaultModelSlug: defaultModelSlug,

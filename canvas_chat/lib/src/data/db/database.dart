@@ -11,6 +11,14 @@ class Conversations extends Table {
   /// Milliseconds since epoch (export floats are converted on import).
   IntColumn get createTime => integer().nullable()();
   IntColumn get updateTime => integer().nullable()();
+
+  /// Milliseconds since epoch of the conversation's most recent message
+  /// (`MAX` of its turns' `create_time`). The export's `update_time` is bumped
+  /// by server-side touches unrelated to messages — a bulk migration can stamp
+  /// a years-old conversation as "today" — so it is unreliable for "when did
+  /// this happen". This derived value drives sidebar ordering and the shown
+  /// date instead; NULL when no turn carries a timestamp.
+  IntColumn get lastMessageAt => integer().nullable()();
   BoolColumn get isArchived => boolean().withDefault(const Constant(false))();
   BoolColumn get isStarred => boolean().withDefault(const Constant(false))();
   TextColumn get defaultModelSlug => text().nullable()();
@@ -102,7 +110,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase(super.e);
 
   @override
-  int get schemaVersion => 1;
+  int get schemaVersion => 2;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -138,6 +146,19 @@ class AppDatabase extends _$AppDatabase {
             'INSERT INTO turns_fts(rowid, prompt_md, response_md) '
             'VALUES (new.rowid, new.prompt_md, new.response_md); END',
           );
+        },
+        onUpgrade: (m, from, to) async {
+          if (from < 2) {
+            // v2 adds conversations.last_message_at. Backfill it from existing
+            // turns so the corrected ordering/date applies without forcing a
+            // re-import.
+            await m.addColumn(conversations, conversations.lastMessageAt);
+            await customStatement(
+              'UPDATE conversations SET last_message_at = ('
+              'SELECT MAX(t.create_time) FROM turns t '
+              'WHERE t.conversation_id = conversations.id)',
+            );
+          }
         },
         beforeOpen: (details) async {
           await customStatement('PRAGMA foreign_keys = ON');
@@ -187,8 +208,9 @@ class AppDatabase extends _$AppDatabase {
     final results = <String, Conversation>{};
     final all = await (select(conversations)
           ..orderBy([
-            (c) => OrderingTerm.desc(c.updateTime),
-            (c) => OrderingTerm.desc(c.createTime),
+            (c) => OrderingTerm.desc(
+                coalesce([c.lastMessageAt, c.updateTime, c.createTime])),
+            (c) => OrderingTerm.desc(c.id),
           ]))
         .get();
     for (final conversation in all) {

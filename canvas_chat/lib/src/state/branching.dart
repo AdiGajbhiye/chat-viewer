@@ -142,6 +142,7 @@ class BranchService {
     required Turn parent,
     required String prompt,
   }) async {
+    final now = DateTime.now().millisecondsSinceEpoch;
     final id = '${parent.conversationId}:$idPrefix-'
         '${DateTime.now().microsecondsSinceEpoch}-${_seq++}';
     await _db.into(_db.turns).insert(
@@ -150,10 +151,15 @@ class BranchService {
             conversationId: parent.conversationId,
             parentTurnId: Value(parent.id),
             promptMd: Value(prompt),
-            createTime: Value(DateTime.now().millisecondsSinceEpoch),
+            createTime: Value(now),
             rawJson: '{"authored":true}',
           ),
         );
+    // An authored turn is the conversation's newest message: keep the sidebar
+    // ordering/date key honest so the branch surfaces at the top.
+    await (_db.update(_db.conversations)
+          ..where((c) => c.id.equals(parent.conversationId)))
+        .write(ConversationsCompanion(lastMessageAt: Value(now)));
     // Kick off streaming now; hand the caller its future without awaiting so
     // the branch appears (and can be focused) before the answer arrives.
     return (id: id, done: _stream(id, parent, prompt));

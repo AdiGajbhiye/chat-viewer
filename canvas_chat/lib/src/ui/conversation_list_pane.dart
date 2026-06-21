@@ -162,7 +162,12 @@ class _ConversationList extends ConsumerWidget {
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
           ),
-          subtitle: Text(_formatDate(context, conversation.updateTime)),
+          subtitle: Text(_formatDate(
+            context,
+            conversation.lastMessageAt ??
+                conversation.updateTime ??
+                conversation.createTime,
+          )),
           onTap: () => ref
               .read(selectedConversationIdProvider.notifier)
               .select(conversation.id),

@@ -27,17 +27,20 @@ final sharedPreferencesProvider = Provider<SharedPreferences>(
   (ref) => throw StateError('sharedPreferencesProvider must be overridden'),
 );
 
-/// All conversations, newest `update_time` first (DESIGN.md §6 sidebar).
-/// A drift stream query: re-emits as the importer inserts rows.
+/// All conversations, most-recent activity first (DESIGN.md §6 sidebar).
+/// Ordered by `last_message_at` (the real time of the latest message),
+/// falling back to the export's `update_time`/`create_time` only when no turn
+/// is timestamped — the header `update_time` alone is unreliable (server-side
+/// touches re-stamp old conversations as recent). A drift stream query: it
+/// re-emits as the importer inserts rows.
 final conversationListProvider = StreamProvider<List<Conversation>>((ref) {
   final db = ref.watch(databaseProvider);
   final query = db.select(db.conversations)
     ..orderBy([
-      (c) => OrderingTerm(
-            expression: c.updateTime,
-            mode: OrderingMode.desc,
+      (c) => OrderingTerm.desc(
+            coalesce([c.lastMessageAt, c.updateTime, c.createTime]),
           ),
-      (c) => OrderingTerm.desc(c.createTime),
+      (c) => OrderingTerm.desc(c.id),
     ]);
   return query.watch();
 });

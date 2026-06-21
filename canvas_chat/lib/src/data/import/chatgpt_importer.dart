@@ -245,12 +245,24 @@ class ChatGptImporter {
             .go();
       }
 
+      // Real time of the conversation's latest message, used for ordering and
+      // the displayed date in place of the unreliable header `update_time`.
+      int? lastMessageAt;
+      for (final turn in paired.turns) {
+        final millis = _millis(turn.createTime);
+        if (millis != null &&
+            (lastMessageAt == null || millis > lastMessageAt)) {
+          lastMessageAt = millis;
+        }
+      }
+
       await db.into(db.conversations).insertOnConflictUpdate(
             ConversationsCompanion.insert(
               id: conv.id,
               title: Value(conv.title),
               createTime: Value(_millis(conv.createTime)),
               updateTime: Value(_millis(conv.updateTime)),
+              lastMessageAt: Value(lastMessageAt),
               isArchived: Value(conv.isArchived),
               isStarred: Value(conv.isStarred),
               defaultModelSlug: Value(conv.defaultModelSlug),
