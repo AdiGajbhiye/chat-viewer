@@ -173,9 +173,9 @@ void main() {
     expect(find.textContaining('follow up'), findsOneWidget);
     expect(find.text('(no prompt)'), findsNothing);
 
-    // The edited-prompt fork parent ("second answer") still carries a ⑂ badge;
-    // the regen fork is now shown by the sibling edge, not a child-count badge.
-    expect(find.textContaining('⑂ 2'), findsNWidgets(1));
+    // The edited-prompt fork parent ("second answer") still carries a fork
+    // badge; the regen fork is now shown by the sibling edge, not a badge.
+    expect(find.byIcon(Icons.alt_route), findsNWidgets(1));
 
     await unmountApp(tester);
   });
@@ -327,7 +327,7 @@ void main() {
           findsOneWidget,
         );
         expect(inOverlay(find.text('(no response)')), findsOneWidget);
-        expect(inOverlay(find.text('⑂ Branch 1 of 3')), findsOneWidget);
+        expect(inOverlay(find.text('Branch 1 of 3')), findsOneWidget);
 
         var state = await readState(tester, 'conv-forked');
         expect(state?.mode, 'read');
@@ -379,7 +379,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 350));
       await tester.pumpAndSettle();
       expect(find.byType(ReadOverlay), findsOneWidget);
-      expect(inOverlay(find.text('⑂ Branch 1 of 3')), findsOneWidget);
+      expect(inOverlay(find.text('Branch 1 of 3')), findsOneWidget);
 
       // ↑ walks to the parent turn (the regenerated response).
       await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
@@ -388,7 +388,7 @@ void main() {
         inOverlay(find.textContaining('second answer', findRichText: true)),
         findsOneWidget,
       );
-      expect(inOverlay(find.text('⑂ Branch 1 of 2')), findsOneWidget);
+      expect(inOverlay(find.text('Branch 1 of 2')), findsOneWidget);
 
       // → jumps across branches at the same depth.
       await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
@@ -397,7 +397,7 @@ void main() {
         inOverlay(find.textContaining('first answer', findRichText: true)),
         findsOneWidget,
       );
-      expect(inOverlay(find.text('⑂ Branch 2 of 2')), findsOneWidget);
+      expect(inOverlay(find.text('Branch 2 of 2')), findsOneWidget);
 
       // ↓ continues down that branch; the quick button mirrors ↑.
       await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
@@ -545,7 +545,7 @@ void main() {
         inOverlay(find.textContaining('follow up', findRichText: true)),
         findsOneWidget,
       );
-      expect(inOverlay(find.text('⑂ Branch 2 of 3')), findsOneWidget);
+      expect(inOverlay(find.text('Branch 2 of 3')), findsOneWidget);
 
       // Swipe right → back to the original branch.
       await tester.fling(find.byType(ReadOverlay), const Offset(400, 0), 1000);
@@ -554,7 +554,7 @@ void main() {
         inOverlay(find.textContaining('edited v2', findRichText: true)),
         findsOneWidget,
       );
-      expect(inOverlay(find.text('⑂ Branch 1 of 3')), findsOneWidget);
+      expect(inOverlay(find.text('Branch 1 of 3')), findsOneWidget);
 
       await tester.sendKeyEvent(LogicalKeyboardKey.escape);
       await tester.pumpAndSettle();

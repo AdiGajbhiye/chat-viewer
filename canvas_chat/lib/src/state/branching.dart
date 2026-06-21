@@ -78,10 +78,36 @@ final llmProviderProvider = Provider<LlmProvider>((ref) {
   return provider;
 });
 
+/// Turn ids whose response is currently streaming in (DESIGN.md §9 "pending"
+/// state). The reader shows a "Generating…" indicator for these; the set is
+/// driven by [BranchService] — an id is added when its stream starts and
+/// removed when it finishes or fails.
+final generatingTurnsProvider =
+    NotifierProvider<GeneratingTurns, Set<String>>(GeneratingTurns.new);
+
+class GeneratingTurns extends Notifier<Set<String>> {
+  @override
+  Set<String> build() => const {};
+
+  void add(String id) {
+    if (state.contains(id)) return;
+    state = {...state, id};
+  }
+
+  void remove(String id) {
+    if (!state.contains(id)) return;
+    state = {...state}..remove(id);
+  }
+}
+
 final branchServiceProvider = Provider<BranchService>(
   (ref) => BranchService(
     ref.watch(databaseProvider),
     ref.watch(llmProviderProvider),
+    onGenerating: (turnId, generating) {
+      final turns = ref.read(generatingTurnsProvider.notifier);
+      generating ? turns.add(turnId) : turns.remove(turnId);
+    },
   ),
 );
 
@@ -92,10 +118,15 @@ final branchServiceProvider = Provider<BranchService>(
 /// lays it out in a fresh lane to the right — a horizontal branch — whenever
 /// the source already has a continuation below it.
 class BranchService {
-  BranchService(this._db, this._llm);
+  BranchService(this._db, this._llm, {this.onGenerating});
 
   final AppDatabase _db;
   final LlmProvider _llm;
+
+  /// Notified when a turn's streaming starts (`true`) and ends (`false`), so
+  /// app state can track which turns are mid-generation. Optional — tests that
+  /// don't care about the pending state omit it.
+  final void Function(String turnId, bool generating)? onGenerating;
 
   /// Authored turns get a distinct id namespace so they never collide with
   /// imported `<conversation>:<node>` ids.
@@ -129,6 +160,7 @@ class BranchService {
   }
 
   Future<void> _stream(String id, Turn parent, String prompt) async {
+    onGenerating?.call(id, true);
     try {
       final context = await _ancestors(parent);
       final buffer = StringBuffer();
@@ -138,6 +170,8 @@ class BranchService {
       }
     } catch (e) {
       await _writeResponse(id, '_Generation failed: ${e}_');
+    } finally {
+      onGenerating?.call(id, false);
     }
   }
 

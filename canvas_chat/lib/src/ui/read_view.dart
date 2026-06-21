@@ -433,7 +433,7 @@ class ReadHeader extends StatelessWidget {
     ]..sort((a, b) => a.lane.compareTo(b.lane));
     if (rowCells.length < 2) return null;
     final index = rowCells.indexWhere((c) => c.turn.id == cell.turn.id);
-    return '⑂ Branch ${index + 1} of ${rowCells.length}';
+    return 'Branch ${index + 1} of ${rowCells.length}';
   }
 }
 
@@ -467,10 +467,16 @@ class TurnBody extends ConsumerWidget {
           };
     void onChunkAction(ChunkAction action, String chunk) =>
         _handleChunkAction(context, ref, action, chunk);
+    final generating = ref.watch(generatingTurnsProvider).contains(turn.id);
+    // Strip ChatGPT web citation markers (PUA tokens) that render as tofu.
+    final prompt = stripChatMarkers(turn.promptMd);
+    final response = stripChatMarkers(turn.responseMd);
+    final thoughts =
+        turn.thoughtsMd == null ? null : stripChatMarkers(turn.thoughtsMd!);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        if (turn.promptMd.isNotEmpty)
+        if (prompt.isNotEmpty)
           Card.filled(
             margin: const EdgeInsets.only(bottom: 16),
             child: Padding(
@@ -481,14 +487,14 @@ class TurnBody extends ConsumerWidget {
                   Text('You', style: theme.textTheme.labelSmall),
                   const SizedBox(height: 8),
                   _MarkdownWithAssets(
-                    markdown: turn.promptMd,
+                    markdown: prompt,
                     assetsByPointer: assetsByPointer,
                   ),
                 ],
               ),
             ),
           ),
-        if (turn.thoughtsMd case final thoughts?)
+        if (thoughts != null && thoughts.isNotEmpty)
           ExpansionTile(
             tilePadding: EdgeInsets.zero,
             title: Text('Reasoning', style: theme.textTheme.labelLarge),
@@ -508,17 +514,24 @@ class TurnBody extends ConsumerWidget {
           style: theme.textTheme.labelSmall,
         ),
         const SizedBox(height: 8),
-        if (turn.responseMd.isEmpty)
-          Text(
-            '(no response)',
-            style: TextStyle(color: theme.colorScheme.outline),
-          )
-        else
+        if (response.isEmpty)
+          generating
+              ? const _GeneratingIndicator()
+              : Text(
+                  '(no response)',
+                  style: TextStyle(color: theme.colorScheme.outline),
+                )
+        else ...[
           _ChunkedResponse(
-            markdown: turn.responseMd,
+            markdown: response,
             assetsByPointer: assetsByPointer,
             onAction: onChunkAction,
           ),
+          if (generating) ...[
+            const SizedBox(height: 12),
+            const _GeneratingIndicator(),
+          ],
+        ],
       ],
     );
   }
@@ -583,6 +596,30 @@ class TurnBody extends ConsumerWidget {
       .split('\n')
       .map((line) => line.isEmpty ? '>' : '> $line')
       .join('\n');
+}
+
+/// A small spinner + label shown in the reader while a forked branch's
+/// response is still streaming in from the provider (DESIGN.md §9 pending
+/// state). Driven by [generatingTurnsProvider].
+class _GeneratingIndicator extends StatelessWidget {
+  const _GeneratingIndicator();
+
+  @override
+  Widget build(BuildContext context) {
+    final color = Theme.of(context).colorScheme.primary;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        SizedBox(
+          width: 14,
+          height: 14,
+          child: CircularProgressIndicator(strokeWidth: 2, color: color),
+        ),
+        const SizedBox(width: 10),
+        Text('Generating…', style: TextStyle(color: color)),
+      ],
+    );
+  }
 }
 
 /// Markdown with the importer's `![image](asset://<pointerId>)` markers

@@ -1,8 +1,12 @@
+import 'dart:async';
+
 import 'package:canvas_chat/src/data/db/database.dart';
 import 'package:canvas_chat/src/data/llm/llm_provider.dart';
 import 'package:canvas_chat/src/state/branching.dart';
+import 'package:canvas_chat/src/state/providers.dart';
 import 'package:drift/drift.dart';
 import 'package:drift/native.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 /// A deterministic provider that echoes a marker + the prompt, so a test can
@@ -15,6 +19,23 @@ class _EchoProvider implements LlmProvider {
   }) async* {
     yield 'ECHO(${context.length}): ';
     yield prompt;
+  }
+}
+
+/// A provider whose single delta is withheld until [gate] completes, so a test
+/// can observe the in-flight (generating) state before letting it finish.
+class _GatedProvider implements LlmProvider {
+  _GatedProvider(this.gate);
+
+  final Completer<void> gate;
+
+  @override
+  Stream<String> generate({
+    required String prompt,
+    required List<Turn> context,
+  }) async* {
+    await gate.future;
+    yield 'done';
   }
 }
 
@@ -102,5 +123,28 @@ void main() {
           ..where((t) => t.parentTurnId.equals('c:p')))
         .get();
     expect(children.map((t) => t.id), containsAll([a.id, b.id]));
+  });
+
+  test('generatingTurnsProvider holds the turn while its response streams',
+      () async {
+    final gate = Completer<void>();
+    final container = ProviderContainer(overrides: [
+      databaseProvider.overrideWithValue(db),
+      llmProviderProvider.overrideWithValue(_GatedProvider(gate)),
+    ]);
+    addTearDown(container.dispose);
+    final parent = await _insertTurn(db, id: 'c:p');
+
+    final branch = await container
+        .read(branchServiceProvider)
+        .branchFrom(parent: parent, prompt: 'go');
+
+    // The new turn is marked generating the moment streaming begins.
+    expect(container.read(generatingTurnsProvider), contains(branch.id));
+
+    // Once the stream completes, the id is cleared.
+    gate.complete();
+    await branch.done;
+    expect(container.read(generatingTurnsProvider), isNot(contains(branch.id)));
   });
 }

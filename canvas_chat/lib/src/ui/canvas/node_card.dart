@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../domain/grid_layout.dart';
+import '../../domain/markdown_blocks.dart';
 
 /// Direction for grid navigation (arrow keys).
 enum GridDirection { up, down, left, right }
@@ -33,6 +34,8 @@ class NodeCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
+    final metaStyle =
+        theme.textTheme.labelSmall?.copyWith(color: scheme.outline);
     // A search hit is never dimmed, so matches pop out of the dimmed lanes.
     final dimmed = !cell.onActivePath && !selected && !matched;
 
@@ -74,7 +77,8 @@ class NodeCard extends StatelessWidget {
                   child: Text(
                     cell.turn.promptMd.isEmpty
                         ? '(no prompt)'
-                        : _collapseWhitespace(cell.turn.promptMd),
+                        : _collapseWhitespace(
+                            stripChatMarkers(cell.turn.promptMd)),
                     maxLines: 8,
                     overflow: TextOverflow.ellipsis,
                     style: theme.textTheme.bodyMedium
@@ -82,12 +86,25 @@ class NodeCard extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 4),
-                Text(
-                  _metaLine(context),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: theme.textTheme.labelSmall
-                      ?.copyWith(color: scheme.outline),
+                Row(
+                  children: [
+                    Flexible(
+                      child: Text(
+                        _metaLine(context),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: metaStyle,
+                      ),
+                    ),
+                    // Fork count (DESIGN.md §6): a branch icon every font ships,
+                    // rather than the bare ⑂ glyph that renders as tofu.
+                    if (cell.childCount > 1) ...[
+                      const SizedBox(width: 6),
+                      Icon(Icons.alt_route, size: 12, color: scheme.outline),
+                      const SizedBox(width: 1),
+                      Text('${cell.childCount}', style: metaStyle),
+                    ],
+                  ],
                 ),
               ],
             ),
@@ -104,7 +121,6 @@ class NodeCard extends StatelessWidget {
           DateTime.fromMillisecondsSinceEpoch(millis),
         ),
       ?cell.turn.modelSlug,
-      if (cell.childCount > 1) '⑂ ${cell.childCount}',
     ];
     return parts.join(' · ');
   }

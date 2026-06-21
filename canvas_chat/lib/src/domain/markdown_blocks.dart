@@ -1,3 +1,33 @@
+/// Strips ChatGPT web-export citation markers from [markdown]. The web export
+/// wraps inline citations in Private Use Area anchors — U+E200 `cite` U+E202
+/// `turn0search0` U+E201 — and sprinkles stray U+E204 / U+E206 group markers.
+/// No font carries a glyph for these PUA code points (U+E200..U+E2FF), so they
+/// render as tofu / `?`; only the ChatGPT web export emits them (the API never
+/// does). The whole token — including the visible `cite` / `turnXsearchY` label
+/// between the anchors — is removed, since stripping only the invisible anchors
+/// would leave `citeturn0search0` behind as visible noise.
+String stripChatMarkers(String markdown) {
+  final open = String.fromCharCode(0xE200); // citation block open
+  final close = String.fromCharCode(0xE201); // citation block close
+  final sep = String.fromCharCode(0xE202); // ref separator
+  return markdown
+      // A citation token: open + `cite` + (sep + ref)* + close, where the label
+      // and refs are ASCII alphanumeric. Bounding the inner run to [A-Za-z0-9] +
+      // sep means an unpaired or differently-closed anchor (e.g. U+E203/E206)
+      // can NEVER swallow real prose — spaces, punctuation or emoji break the
+      // match, so content is left intact instead of being deleted.
+      .replaceAll(RegExp('$open[A-Za-z0-9$sep]*$close'), '')
+      // Then drop any leftover individual PUA anchors (U+E200..U+E2FF) — e.g. the
+      // standalone U+E204/U+E206 group markers. Single-char removal never eats
+      // surrounding text, so only the invisible marker itself is lost.
+      .replaceAll(
+        RegExp(
+          '[${String.fromCharCode(0xE200)}-${String.fromCharCode(0xE2FF)}]',
+        ),
+        '',
+      );
+}
+
 /// Splits assistant-response markdown into block-level "chunks" — one per
 /// paragraph, heading, list, blockquote, table, or fenced code block — so the
 /// reader can render each with its own per-passage toolbar (Ask AI / Explain /
