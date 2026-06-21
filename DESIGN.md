@@ -366,13 +366,19 @@ cards is **UI-thread (build) bound**:
 
 Fixes, by impact (✓ = landed):
 
-1. Build cards once per layout/selection/search change and apply the viewport as
-   a `Transform` over a `RepaintBoundary`'d subtree (pan = re-composite, not
-   rebuild+repaint).
+1. ✓ Build the node layer once and pass it as the `ListenableBuilder` child, so
+   only the viewport `Transform` rebuilds per tick; each card and the edge
+   painter sit behind a `RepaintBoundary`, and the cull keeps a half-viewport
+   pre-build margin (refreshed only when the view nears its edge). A pan now
+   re-composites instead of rebuild+repaint — **worst frame build 51 → 7.7 ms,
+   avg 12.8 → 2.5 ms, missed frames 2/8 → 0/15, UI GC 22.9 → 0.4 ms**.
 2. ✓ Drop `Opacity`, folding the dim into the card colors — removes the per-card
-   offscreen layer: `saveLayer`/paint 181 → 0, raster avg ~9 → 2.4 ms.
-3. Precompute the collapsed prompt string off the frame path.
-4. Isolate `EdgePainter` behind its own `RepaintBoundary`.
+   offscreen layer: `saveLayer`/paint 181 → 0, raster avg ~9 → 1.3 ms.
+3. (deferred) Precompute the collapsed prompt string off the frame path — now
+   low-value: decoupling already cut per-frame UI GC to ~0, so the per-frame
+   regex no longer matters; worth doing only for code clarity.
+4. ✓ Isolate `EdgePainter` behind a `RepaintBoundary` with a stable cull rect
+   (folded into fix 1) — it no longer repaints during a pan.
 
 ### Sidebar / home
 

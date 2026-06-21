@@ -14,6 +14,16 @@ shortcuts, Android input, import warnings).
 
 ## Log
 
+- 2026-06-21 · perf fix · node-layer decouple (the big one). Edges + each card
+  are built once behind a `RepaintBoundary` and passed as the `ListenableBuilder`
+  child, so only the viewport `Transform` rebuilds per pan/zoom tick; culling is
+  kept, with a half-viewport pre-build margin refreshed only when the view nears
+  its edge. A pan is now a re-composite, not a rebuild+repaint. Trace (fitted
+  ~440-node pan): worst frame build 51 → 7.7 ms, avg 12.8 → 2.5 ms, missed frames
+  2/8 → 0/15, UI GC 22.9 → 0.4 ms; raster 1.3 ms. Subsumes the planned
+  EdgePainter-isolation fix; the precompute-prompt-string fix is now deferred (GC
+  already ~0). One culling widget-test updated for the pre-build margin; analyze
+  clean, 156 tests pass.
 - 2026-06-21 · perf fix 1/4 · Node cards no longer wrap in `Opacity(0.6)`; the
   off-path dim is folded into opaque colors (lerp toward the canvas backdrop) so
   there's no offscreen `saveLayer` per card. Trace (fitted ~440-node pan):

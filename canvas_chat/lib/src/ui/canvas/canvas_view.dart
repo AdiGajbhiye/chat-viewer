@@ -48,6 +48,13 @@ class _CanvasViewState extends ConsumerState<CanvasView>
   bool _initialized = false;
   Size _viewSize = Size.zero;
 
+  /// The canvas-space rect the node layer is currently built (culled) for.
+  /// Decoupled from the live viewport: panning within this rect is a pure
+  /// [Transform] re-composite, not a rebuild. Refreshed — with a viewport-sized
+  /// margin so keyed cards diff incrementally — only when the view nears its
+  /// edge (see [_onViewportChanged]). DESIGN.md §6 "Performance".
+  Rect _builtCull = Rect.zero;
+
   /// Bumped each time the reader is (re)entered so it rebuilds seated on the
   /// current selection. Focus changes *within* the reader leave it untouched,
   /// so paging through turns doesn't reset the reader.
@@ -322,9 +329,15 @@ class _CanvasViewState extends ConsumerState<CanvasView>
                   ),
             },
             child: ClipRect(
+              // The node layer (edges + cards) is built once per
+              // layout/selection/cull change and passed as `child`; only the
+              // viewport Transform rebuilds per pan/zoom tick, so panning
+              // re-composites cached layers instead of rebuilding+repainting
+              // every card (DESIGN.md §6 "Performance").
               child: ListenableBuilder(
                 listenable: _viewport,
-                builder: (context, _) => _buildCanvas(context, layout),
+                child: _buildNodeLayer(context, layout),
+                builder: (context, child) => _applyViewport(context, child!),
               ),
             ),
           ),
@@ -418,16 +431,66 @@ class _CanvasViewState extends ConsumerState<CanvasView>
     if (layout != null) _select(layout, ids[next]);
   }
 
-  Widget _buildCanvas(BuildContext context, TurnGridLayout layout) {
+  /// Builds the culled node layer — edges + cards — in canvas coordinates,
+  /// independent of the live viewport so it isn't rebuilt on every pan/zoom
+  /// tick. Each card and the edge painter sit behind a [RepaintBoundary] so a
+  /// viewport change re-composites their cached layers instead of repainting
+  /// them. Cull uses [_builtCull] (refreshed in [_onViewportChanged]); this
+  /// also self-heals it for the first build and after a window resize.
+  Widget _buildNodeLayer(BuildContext context, TurnGridLayout layout) {
     final scheme = Theme.of(context).colorScheme;
     final contentSize = CanvasMetrics.contentSize(layout);
     final visible = _viewport.visibleRect(_viewSize);
-    final cullRect = visible.inflate(CanvasMetrics.rowGap);
+    if (!_cullCovers(visible)) {
+      _builtCull = visible.inflate(_cullMargin(visible));
+    }
+    final cull = _builtCull;
     final visibleCells = [
       for (final cell in layout.cells)
-        if (cullRect.overlaps(CanvasMetrics.cellRect(cell))) cell,
+        if (cull.overlaps(CanvasMetrics.cellRect(cell))) cell,
     ];
 
+    return SizedBox(
+      width: contentSize.width,
+      height: contentSize.height,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          Positioned.fill(
+            child: RepaintBoundary(
+              child: CustomPaint(
+                painter: EdgePainter(
+                  layout: layout,
+                  visibleRect: cull,
+                  activeColor: scheme.primary,
+                  dimColor: scheme.outlineVariant,
+                ),
+              ),
+            ),
+          ),
+          for (final cell in visibleCells)
+            Positioned.fromRect(
+              rect: CanvasMetrics.cellRect(cell),
+              child: RepaintBoundary(
+                child: NodeCard(
+                  key: ValueKey('node-${cell.turn.id}'),
+                  cell: cell,
+                  selected: cell.turn.id == _selectedId,
+                  matched: _matchedSet.contains(cell.turn.id),
+                  onMaximize: () => _enterRead(cell.turn.id),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  /// Wraps the prebuilt [nodeLayer] with the canvas backdrop and the live
+  /// viewport [Transform]. This is the only part that rebuilds per pan/zoom
+  /// tick, so a pan is a cheap matrix update + re-composite.
+  Widget _applyViewport(BuildContext context, Widget nodeLayer) {
+    final scheme = Theme.of(context).colorScheme;
     return Stack(
       clipBehavior: Clip.none,
       children: [
@@ -449,41 +512,24 @@ class _CanvasViewState extends ConsumerState<CanvasView>
                 _viewport.scale,
                 1,
               ),
-            child: SizedBox(
-              width: contentSize.width,
-              height: contentSize.height,
-              child: Stack(
-                clipBehavior: Clip.none,
-                children: [
-                  Positioned.fill(
-                    child: CustomPaint(
-                      painter: EdgePainter(
-                        layout: layout,
-                        visibleRect: visible,
-                        activeColor: scheme.primary,
-                        dimColor: scheme.outlineVariant,
-                      ),
-                    ),
-                  ),
-                  for (final cell in visibleCells)
-                    Positioned.fromRect(
-                      rect: CanvasMetrics.cellRect(cell),
-                      child: NodeCard(
-                        key: ValueKey('node-${cell.turn.id}'),
-                        cell: cell,
-                        selected: cell.turn.id == _selectedId,
-                        matched: _matchedSet.contains(cell.turn.id),
-                        onMaximize: () => _enterRead(cell.turn.id),
-                      ),
-                    ),
-                ],
-              ),
-            ),
+            child: nodeLayer,
           ),
         ),
       ],
     );
   }
+
+  /// Half-viewport margin (canvas space) baked around the view when (re)building
+  /// the culled node layer, so the view can pan that far before a rebuild.
+  double _cullMargin(Rect visible) =>
+      math.max(visible.width, visible.height) * 0.5;
+
+  /// Whether [_builtCull] still fully contains [visible] (no cull rebuild due).
+  bool _cullCovers(Rect visible) =>
+      _builtCull.left <= visible.left &&
+      _builtCull.top <= visible.top &&
+      _builtCull.right >= visible.right &&
+      _builtCull.bottom >= visible.bottom;
 
   /// Keeps the selection valid across data refreshes (e.g. re-import while
   /// open); initializes it from the persisted `focused_turn_id`, falling
@@ -610,6 +656,9 @@ class _CanvasViewState extends ConsumerState<CanvasView>
 
   void _onViewportChanged() {
     if (!_initialized) return;
+    // Rebuild the culled node layer only when the view nears the built margin;
+    // steady panning within it is a pure Transform re-composite (no rebuild).
+    if (!_cullCovers(_viewport.visibleRect(_viewSize))) setState(() {});
     _saveTimer?.cancel();
     _saveTimer = Timer(const Duration(milliseconds: 300), _persistState);
   }

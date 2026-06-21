@@ -154,11 +154,12 @@ void main() {
     await tester.pumpAndSettle();
 
     // Canvas opens centered at 1:1 on the current turn ("edited v2", lane 0).
-    // The right-hand lanes ("edited v1", "follow up") are off-screen — culled.
+    // Far-off cards are culled (see the tall-conversation test below); the
+    // node layer now pre-builds a viewport-sized margin of off-screen cards so
+    // panning is a re-composite, not a rebuild — so this case no longer asserts
+    // that immediate off-screen neighbours are absent.
     expect(find.byType(NodeCard), findsWidgets);
     expect(find.textContaining('edited v2'), findsOneWidget);
-    expect(find.textContaining('edited v1'), findsNothing);
-    expect(find.textContaining('follow up'), findsNothing);
 
     // The selection starts on the conversation's current turn.
     expect(selectedCard(tester).cell.turn.id, 'conv-forked:f-u3b');
