@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'src/data/db/database.dart';
 import 'src/state/providers.dart';
@@ -25,11 +26,15 @@ Future<void> main() async {
     ),
   );
 
+  // Small-settings store (LLM connection config); loaded before the first frame.
+  final prefs = await SharedPreferences.getInstance();
+
   runApp(
     ProviderScope(
       overrides: [
         databaseProvider.overrideWithValue(db),
         assetsDirProvider.overrideWithValue(assetsDir),
+        sharedPreferencesProvider.overrideWithValue(prefs),
       ],
       child: const CanvasChatApp(),
     ),

@@ -3,14 +3,80 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../data/db/database.dart';
 import '../data/llm/llm_provider.dart';
+import '../data/llm/openai_compatible_provider.dart';
 import 'providers.dart';
 
-/// The text-generation backend used when branching off a chunk. Defaults to the
-/// fully-offline [StubLlmProvider]; override this provider to plug in a real
-/// one (the rest of the app is provider-agnostic).
-final llmProviderProvider = Provider<LlmProvider>(
-  (ref) => const StubLlmProvider(),
-);
+/// Connection settings for the live provider, persisted in shared-prefs and
+/// edited from the model-settings dialog. First-run defaults are seeded from
+/// `--dart-define`s (`flutter run --dart-define=OPENAI_API_KEY=sk-…`) so a
+/// backend can be wired up for a run without committing a key; once the user
+/// saves, the stored values win. Until a usable key is present the app stays on
+/// the offline [StubLlmProvider].
+final llmConfigProvider =
+    NotifierProvider<LlmConfigNotifier, LlmConfig>(LlmConfigNotifier.new);
+
+class LlmConfigNotifier extends Notifier<LlmConfig> {
+  static const _kBaseUrl = 'llm.baseUrl';
+  static const _kApiKey = 'llm.apiKey';
+  static const _kModel = 'llm.model';
+  static const _kSystemPrompt = 'llm.systemPrompt';
+
+  @override
+  LlmConfig build() {
+    final prefs = ref.watch(sharedPreferencesProvider);
+    // `--dart-define`s seed the first run; any saved value overrides them.
+    const seed = LlmConfig(
+      baseUrl: String.fromEnvironment(
+        'OPENAI_BASE_URL',
+        defaultValue: 'https://api.openai.com/v1',
+      ),
+      apiKey: String.fromEnvironment('OPENAI_API_KEY'),
+      model: String.fromEnvironment('OPENAI_MODEL', defaultValue: 'gpt-4o-mini'),
+    );
+    return LlmConfig(
+      baseUrl: prefs.getString(_kBaseUrl) ?? seed.baseUrl,
+      apiKey: prefs.getString(_kApiKey) ?? seed.apiKey,
+      model: prefs.getString(_kModel) ?? seed.model,
+      systemPrompt: prefs.getString(_kSystemPrompt) ?? seed.systemPrompt,
+    );
+  }
+
+  /// Trims, persists, and publishes [config]; `llmProviderProvider` rebuilds
+  /// onto the new backend immediately. A blank system prompt is dropped.
+  Future<void> set(LlmConfig config) async {
+    final system = config.systemPrompt?.trim();
+    final normalized = LlmConfig(
+      baseUrl: config.baseUrl.trim(),
+      apiKey: config.apiKey.trim(),
+      model: config.model.trim(),
+      systemPrompt: (system == null || system.isEmpty) ? null : system,
+    );
+
+    final prefs = ref.read(sharedPreferencesProvider);
+    await prefs.setString(_kBaseUrl, normalized.baseUrl);
+    await prefs.setString(_kApiKey, normalized.apiKey);
+    await prefs.setString(_kModel, normalized.model);
+    if (normalized.systemPrompt == null) {
+      await prefs.remove(_kSystemPrompt);
+    } else {
+      await prefs.setString(_kSystemPrompt, normalized.systemPrompt!);
+    }
+
+    state = normalized;
+  }
+}
+
+/// The text-generation backend used when branching off a chunk. Resolves to a
+/// live [OpenAiCompatibleProvider] once [llmConfigProvider] holds a usable key,
+/// and otherwise to the fully-offline [StubLlmProvider]; the rest of the app is
+/// provider-agnostic.
+final llmProviderProvider = Provider<LlmProvider>((ref) {
+  final config = ref.watch(llmConfigProvider);
+  if (!config.isConfigured) return const StubLlmProvider();
+  final provider = OpenAiCompatibleProvider(config);
+  ref.onDispose(provider.close);
+  return provider;
+});
 
 final branchServiceProvider = Provider<BranchService>(
   (ref) => BranchService(

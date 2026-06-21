@@ -4,6 +4,7 @@ import 'package:drift/drift.dart';
 import 'package:flutter/widgets.dart' show FocusNode;
 import 'package:flutter/material.dart' show Brightness, ThemeMode;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../data/db/database.dart';
 import '../domain/grid_layout.dart';
@@ -17,6 +18,13 @@ final databaseProvider = Provider<AppDatabase>(
 /// Directory imported assets are copied into. Overridden in `main()`.
 final assetsDirProvider = Provider<Directory>(
   (ref) => throw StateError('assetsDirProvider must be overridden'),
+);
+
+/// The app's key/value store for small settings (the LLM connection config).
+/// Loaded once and overridden in `main()`; tests that touch settings override
+/// it with a `SharedPreferences.getInstance()` after `setMockInitialValues`.
+final sharedPreferencesProvider = Provider<SharedPreferences>(
+  (ref) => throw StateError('sharedPreferencesProvider must be overridden'),
 );
 
 /// All conversations, newest `update_time` first (DESIGN.md §6 sidebar).

@@ -6,6 +6,7 @@ import '../data/db/database.dart';
 import '../state/import_controller.dart';
 import '../state/providers.dart';
 import 'import_warnings_dialog.dart';
+import 'llm_settings_dialog.dart';
 
 /// Sidebar: import button, FTS search field (M5), and the conversation list
 /// (newest first, or search results when a query is active) — DESIGN.md §6
@@ -59,6 +60,7 @@ class ConversationListPane extends ConsumerWidget {
                   style: Theme.of(context).textTheme.titleMedium,
                 ),
               ),
+              const _SettingsButton(),
               const _ThemeToggleButton(),
               const ImportMenuButton(),
             ],
@@ -173,6 +175,20 @@ class _ConversationList extends ConsumerWidget {
     if (millis == null) return '';
     return MaterialLocalizations.of(context)
         .formatShortDate(DateTime.fromMillisecondsSinceEpoch(millis));
+  }
+}
+
+/// Opens the LLM connection settings (model / API key / base URL).
+class _SettingsButton extends StatelessWidget {
+  const _SettingsButton();
+
+  @override
+  Widget build(BuildContext context) {
+    return IconButton(
+      tooltip: 'Model settings',
+      icon: const Icon(Icons.settings_outlined),
+      onPressed: () => showLlmSettingsDialog(context),
+    );
   }
 }
 
