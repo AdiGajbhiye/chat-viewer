@@ -22,6 +22,7 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../test/helpers/synthetic_export.dart';
 
@@ -85,6 +86,7 @@ void main() {
   late Directory tempDir;
   late Directory assetsDir;
   late AppDatabase db;
+  late SharedPreferences prefs;
   late Directory shotsDir;
   final boundaryKey = GlobalKey();
 
@@ -92,6 +94,11 @@ void main() {
     tempDir = await Directory.systemTemp.createTemp('canvas_chunk');
     assetsDir = Directory('${tempDir.path}/assets')..createSync();
     db = AppDatabase(NativeDatabase.memory());
+    // The fork/branch path reads the LLM config from SharedPreferences, so the
+    // provider must be overridden (it has no default) — without this, tapping a
+    // chunk action throws "sharedPreferencesProvider must be overridden".
+    SharedPreferences.setMockInitialValues({});
+    prefs = await SharedPreferences.getInstance();
     shotsDir = Directory('${Directory.current.path}/build/chunk_shots')
       ..createSync(recursive: true);
   });
@@ -119,6 +126,7 @@ void main() {
           overrides: [
             databaseProvider.overrideWithValue(db),
             assetsDirProvider.overrideWithValue(assetsDir),
+            sharedPreferencesProvider.overrideWithValue(prefs),
             themeModeProvider.overrideWith(() => _FixedTheme(mode)),
           ],
           child: const CanvasChatApp(),
