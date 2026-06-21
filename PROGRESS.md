@@ -14,6 +14,11 @@ shortcuts, Android input, import warnings).
 
 ## Log
 
+- 2026-06-21 · perf fix 1/4 · Node cards no longer wrap in `Opacity(0.6)`; the
+  off-path dim is folded into opaque colors (lerp toward the canvas backdrop) so
+  there's no offscreen `saveLayer` per card. Trace (fitted ~440-node pan):
+  `saveLayer`/paint 181 → 0, raster avg ~9 → 2.4 ms; analyze clean, 156 tests
+  pass.
 - 2026-06-21 · perf review · Real-engine profile trace of the "not smooth with
   many nodes" report. Root cause: the canvas redraws on every viewport tick —
   the node layer is rebuilt **and** repainted per frame with no `RepaintBoundary`

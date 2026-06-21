@@ -34,80 +34,84 @@ class NodeCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-    final metaStyle =
-        theme.textTheme.labelSmall?.copyWith(color: scheme.outline);
     // A search hit is never dimmed, so matches pop out of the dimmed lanes.
     final dimmed = !cell.onActivePath && !selected && !matched;
+    // Dimmed off-path cards previously used Opacity(0.6) — one saveLayer each.
+    // Fold the dim into opaque colors (lerp toward the canvas background) so
+    // there is no offscreen layer. surfaceContainerHigh is the canvas backdrop
+    // behind cards (see _buildCanvas in canvas_view.dart).
+    Color dim(Color c) =>
+        dimmed ? Color.lerp(scheme.surfaceContainerHigh, c, 0.6)! : c;
+    final metaStyle =
+        theme.textTheme.labelSmall?.copyWith(color: dim(scheme.outline));
 
-    return Opacity(
-      opacity: dimmed ? 0.6 : 1,
-      child: Material(
-        color: matched && !selected
-            ? scheme.tertiaryContainer
-            : cell.onActivePath
-                ? scheme.surfaceContainerLow
-                : scheme.surfaceContainerLowest,
+    return Material(
+      color: dim(matched && !selected
+          ? scheme.tertiaryContainer
+          : cell.onActivePath
+              ? scheme.surfaceContainerLow
+              : scheme.surfaceContainerLowest),
+      borderRadius: BorderRadius.circular(12),
+      elevation: selected ? 3 : 1,
+      child: InkWell(
+        // Tap a node → read mode for that node (DESIGN.md §6).
+        onTap: onMaximize,
         borderRadius: BorderRadius.circular(12),
-        elevation: selected ? 3 : 1,
-        child: InkWell(
-          // Tap a node → read mode for that node (DESIGN.md §6).
-          onTap: onMaximize,
-          borderRadius: BorderRadius.circular(12),
-          child: Container(
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(
-                color: selected
-                    ? scheme.primary
-                    : matched
-                        ? scheme.tertiary
-                        : cell.onActivePath
-                            ? scheme.outlineVariant
-                            : scheme.outlineVariant.withValues(alpha: 0.5),
-                width: selected || matched ? 2 : 1,
+        child: Container(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: dim(selected
+                  ? scheme.primary
+                  : matched
+                      ? scheme.tertiary
+                      : cell.onActivePath
+                          ? scheme.outlineVariant
+                          : scheme.outlineVariant.withValues(alpha: 0.5)),
+              width: selected || matched ? 2 : 1,
+            ),
+          ),
+          padding: const EdgeInsets.fromLTRB(14, 12, 14, 10),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // The question fills the card (the assistant reply is read
+              // mode only — navigate mode stays a map of prompts).
+              Expanded(
+                child: Text(
+                  cell.turn.promptMd.isEmpty
+                      ? '(no prompt)'
+                      : _collapseWhitespace(
+                          stripChatMarkers(cell.turn.promptMd)),
+                  maxLines: 8,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                      fontWeight: FontWeight.w500,
+                      color: dim(scheme.onSurface)),
+                ),
               ),
-            ),
-            padding: const EdgeInsets.fromLTRB(14, 12, 14, 10),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // The question fills the card (the assistant reply is read
-                // mode only — navigate mode stays a map of prompts).
-                Expanded(
-                  child: Text(
-                    cell.turn.promptMd.isEmpty
-                        ? '(no prompt)'
-                        : _collapseWhitespace(
-                            stripChatMarkers(cell.turn.promptMd)),
-                    maxLines: 8,
-                    overflow: TextOverflow.ellipsis,
-                    style: theme.textTheme.bodyMedium
-                        ?.copyWith(fontWeight: FontWeight.w500),
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Row(
-                  children: [
-                    Flexible(
-                      child: Text(
-                        _metaLine(context),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: metaStyle,
-                      ),
+              const SizedBox(height: 4),
+              Row(
+                children: [
+                  Flexible(
+                    child: Text(
+                      _metaLine(context),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: metaStyle,
                     ),
-                    // Fork count (DESIGN.md §6): a branch icon every font ships,
-                    // rather than the bare ⑂ glyph that renders as tofu.
-                    if (cell.childCount > 1) ...[
-                      const SizedBox(width: 6),
-                      Icon(Icons.alt_route, size: 12, color: scheme.outline),
-                      const SizedBox(width: 1),
-                      Text('${cell.childCount}', style: metaStyle),
-                    ],
+                  ),
+                  // Fork count (DESIGN.md §6): a branch icon every font ships,
+                  // rather than the bare ⑂ glyph that renders as tofu.
+                  if (cell.childCount > 1) ...[
+                    const SizedBox(width: 6),
+                    Icon(Icons.alt_route, size: 12, color: dim(scheme.outline)),
+                    const SizedBox(width: 1),
+                    Text('${cell.childCount}', style: metaStyle),
                   ],
-                ),
-              ],
-            ),
+                ],
+              ),
+            ],
           ),
         ),
       ),

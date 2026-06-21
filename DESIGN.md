@@ -364,11 +364,15 @@ cards is **UI-thread (build) bound**:
 - **~181 `Canvas::saveLayer`/paint** — the `Opacity(0.6)` dim per off-path card;
   cheap at fit-zoom but `saveLayer` cost grows with pixel area at normal zoom.
 
-Planned fixes, by impact: (1) build cards once per layout/selection/search change
-and apply the viewport as a `Transform` over a `RepaintBoundary`'d subtree (pan =
-re-composite, not rebuild+repaint); (2) drop `Opacity`, folding the dim into the
-card colors; (3) precompute the collapsed prompt string off the frame path;
-(4) isolate `EdgePainter` behind its own `RepaintBoundary`.
+Fixes, by impact (✓ = landed):
+
+1. Build cards once per layout/selection/search change and apply the viewport as
+   a `Transform` over a `RepaintBoundary`'d subtree (pan = re-composite, not
+   rebuild+repaint).
+2. ✓ Drop `Opacity`, folding the dim into the card colors — removes the per-card
+   offscreen layer: `saveLayer`/paint 181 → 0, raster avg ~9 → 2.4 ms.
+3. Precompute the collapsed prompt string off the frame path.
+4. Isolate `EdgePainter` behind its own `RepaintBoundary`.
 
 ### Sidebar / home
 
