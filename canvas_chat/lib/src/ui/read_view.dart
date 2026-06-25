@@ -65,6 +65,12 @@ class _ReadOverlayState extends ConsumerState<ReadOverlay>
   late String _focusedId = widget.initialTurnId;
   double _dragOverscroll = 0;
 
+  /// Whether the right-hand-side generated-index panel is shown on wide
+  /// layouts (DESIGN.md §10). Default on; the header toggle hides it to reclaim
+  /// the width. Below the wide breakpoint the panel never shows regardless —
+  /// the index falls back to a collapsible section at the foot of the body.
+  bool _showIndexPanel = true;
+
   /// Explicitly grabbed on mount: when the reader cross-fades in over the graph
   /// the graph still holds keyboard focus, so plain `autofocus` would be
   /// ignored and the arrow/Esc shortcuts would go nowhere.
@@ -173,17 +179,32 @@ class _ReadOverlayState extends ConsumerState<ReadOverlay>
   /// so a navigation slides the entire node as a unit instead of only the
   /// transcript moving under a header that stays put.
   Widget _page(TurnGridLayout layout, GridCell cell, {required bool live}) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        ReadHeader(
-          cell: cell,
-          layout: layout,
-          onNavigate: (direction) => _go(cell, direction),
-        ),
-        const Divider(height: 1),
-        Expanded(child: _body(cell, live: live)),
-      ],
+    // One LayoutBuilder for the whole page so the header's panel toggle and the
+    // body's panel both key off the same width: the toggle only appears when a
+    // panel can actually fit, and the two never disagree.
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final wide = constraints.maxWidth >= _indexPanelBreakpoint;
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            ReadHeader(
+              cell: cell,
+              layout: layout,
+              onNavigate: (direction) => _go(cell, direction),
+              indexPanelShown: _showIndexPanel,
+              // The toggle is meaningful only on wide layouts; below the
+              // breakpoint the index lives at the foot of the body, with no
+              // panel to reclaim.
+              onToggleIndexPanel: wide
+                  ? () => setState(() => _showIndexPanel = !_showIndexPanel)
+                  : null,
+            ),
+            const Divider(height: 1),
+            Expanded(child: _body(cell, live: live, wide: wide)),
+          ],
+        );
+      },
     );
   }
 
@@ -211,13 +232,55 @@ class _ReadOverlayState extends ConsumerState<ReadOverlay>
     );
   }
 
-  /// One turn's scrollable transcript. The [live] one also watches for an
-  /// overscroll past its edges to page up/down; the outgoing snapshot doesn't.
-  Widget _body(GridCell cell, {required bool live}) {
-    // Cap the line length and center on a wide pane so the transcript keeps a
-    // comfortable reading width instead of running edge to edge. TurnBody is the
-    // scrollable (a lazy ListView), so a long transcript lays out only the
-    // on-screen chunks (DESIGN.md §6 "Performance").
+  /// Reader's available width at/above which the generated index lives in a
+  /// persistent RHS panel (DESIGN.md §10). Below it the panel can't fit beside
+  /// a comfortable reading column, so the index falls back to a collapsible
+  /// section at the foot of the body instead.
+  static const _indexPanelBreakpoint = 720.0;
+
+  /// Width of the RHS index panel column on wide layouts.
+  static const _indexPanelWidth = 320.0;
+
+  /// One turn's body. On a wide pane it's a [Row]: the scrollable transcript
+  /// (capped to a comfortable reading width + centered *within its own area*)
+  /// on the left, and the focused turn's generated index as a fixed-width
+  /// panel on the right (DESIGN.md §10), separated by a subtle divider. The
+  /// panel scrolls independently. Below the breakpoint (narrow windows /
+  /// Android) — or when the header toggle hides the panel — the body is just
+  /// the transcript, and the index falls back to a collapsible foot section.
+  ///
+  /// The [live] transcript also watches for an overscroll past its edges to
+  /// page up/down; the outgoing snapshot mid-slide doesn't. [wide] is decided
+  /// by [_page]'s LayoutBuilder against [_indexPanelBreakpoint].
+  Widget _body(GridCell cell, {required bool live, required bool wide}) {
+    final showPanel = wide && _showIndexPanel;
+    // The collapsible foot section only appears when the side panel isn't
+    // (narrow layout, or the panel toggled off), so the index is never shown
+    // twice — and never lost.
+    final transcript = _transcript(cell, live: live, showFootIndex: !showPanel);
+    if (!showPanel) return transcript;
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Expanded(child: transcript),
+        const VerticalDivider(width: 1),
+        SizedBox(
+          width: _indexPanelWidth,
+          child: _TurnIndexPanel(turnId: cell.turn.id),
+        ),
+      ],
+    );
+  }
+
+  /// The transcript column: capped to a comfortable reading width and centered
+  /// within whatever horizontal space it's given. TurnBody is the scrollable
+  /// (a lazy ListView), so a long transcript lays out only the on-screen chunks
+  /// (DESIGN.md §6 "Performance").
+  Widget _transcript(
+    GridCell cell, {
+    required bool live,
+    required bool showFootIndex,
+  }) {
     final body = Center(
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 760),
@@ -228,6 +291,7 @@ class _ReadOverlayState extends ConsumerState<ReadOverlay>
           // Only the live page is interactive; the outgoing snapshot mid-slide
           // can't fork branches.
           onBranched: live ? _onBranchCreated : null,
+          showFootIndex: showFootIndex,
         ),
       ),
     );
@@ -331,11 +395,21 @@ class ReadHeader extends StatelessWidget {
     required this.cell,
     required this.layout,
     required this.onNavigate,
+    this.indexPanelShown = true,
+    this.onToggleIndexPanel,
   });
 
   final GridCell cell;
   final TurnGridLayout layout;
   final ValueChanged<GridDirection> onNavigate;
+
+  /// Whether the RHS generated-index panel is currently shown (drives the
+  /// header toggle's icon/tooltip). Only relevant on wide layouts; the toggle
+  /// is hidden when [onToggleIndexPanel] is null.
+  final bool indexPanelShown;
+
+  /// Show/hide the RHS index panel. Null hides the toggle entirely.
+  final VoidCallback? onToggleIndexPanel;
 
   @override
   Widget build(BuildContext context) {
@@ -388,6 +462,21 @@ class ReadHeader extends StatelessWidget {
                 ],
               ),
             ),
+            if (onToggleIndexPanel != null) ...[
+              const SizedBox(width: 4),
+              IconButton(
+                tooltip: indexPanelShown
+                    ? 'Hide generated index'
+                    : 'Show generated index',
+                icon: Icon(
+                  indexPanelShown
+                      ? Icons.auto_awesome
+                      : Icons.auto_awesome_outlined,
+                ),
+                isSelected: indexPanelShown,
+                onPressed: onToggleIndexPanel,
+              ),
+            ],
             const SizedBox(width: 4),
             IconButton(
               tooltip: 'Go up',
@@ -441,7 +530,12 @@ class ReadHeader extends StatelessWidget {
 /// resolved against `turn_assets`. Shared by the read view (one turn at a
 /// time) and anywhere else a turn's full content is shown.
 class TurnBody extends ConsumerWidget {
-  const TurnBody({super.key, required this.turn, this.onBranched});
+  const TurnBody({
+    super.key,
+    required this.turn,
+    this.onBranched,
+    this.showFootIndex = true,
+  });
 
   final Turn turn;
 
@@ -449,6 +543,12 @@ class TurnBody extends ConsumerWidget {
   /// Expand) forks a child branch off [turn], so the reader can glide focus to
   /// it. Null in non-interactive contexts (e.g. the outgoing page mid-slide).
   final ValueChanged<String>? onBranched;
+
+  /// Whether to append the collapsible "Generated index" section at the foot of
+  /// the body. The reader sets this false on wide layouts, where the index
+  /// lives in a persistent RHS panel instead (DESIGN.md §10) — so it isn't
+  /// shown twice.
+  final bool showFootIndex;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -538,12 +638,16 @@ class TurnBody extends ConsumerWidget {
             const _GeneratingIndicator(),
           ],
         ],
-        // The generated index for this turn (DESIGN.md §10), as a collapsible
-        // metadata section at the very end of the body so it never pushes the
-        // conversation content down. A trailing ListView item, so it costs
-        // nothing until scrolled into view.
-        const SizedBox(height: 8),
-        _TurnIndexSection(turnId: turn.id),
+        // The generated index for this turn (DESIGN.md §10). On narrow layouts
+        // it's a collapsible metadata section at the very end of the body so it
+        // never pushes the conversation content down — a trailing ListView
+        // item, so it costs nothing until scrolled into view. On wide layouts
+        // the reader shows it in a persistent RHS panel instead and sets
+        // [showFootIndex] false, so it isn't shown twice.
+        if (showFootIndex) ...[
+          const SizedBox(height: 8),
+          _TurnIndexSection(turnId: turn.id),
+        ],
       ],
     );
   }
@@ -643,11 +747,93 @@ class TurnBody extends ConsumerWidget {
       .join('\n');
 }
 
+/// The persistent right-hand-side "Generated index" panel shown beside the
+/// transcript on wide layouts (DESIGN.md §10 "Proposition index"): the focused
+/// turn's ~5 atomic propositions (each prefixed with its open-vocab aspect tag)
+/// and a wrap of the entities it mentions. Always-on metadata margin — unlike
+/// the narrow-layout [_TurnIndexSection] it isn't collapsible; it just scrolls
+/// independently of the transcript when long.
+///
+/// Loads once per turn via [turnIndexProvider] (cached by turnId), so paging to
+/// a turn re-subscribes once — not per frame. A turn that hasn't been indexed
+/// yet shows a subtle "Not indexed yet" line instead of an empty panel.
+class _TurnIndexPanel extends ConsumerWidget {
+  const _TurnIndexPanel({required this.turnId});
+
+  final String turnId;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final theme = Theme.of(context);
+    final outline = theme.colorScheme.outline;
+    final async = ref.watch(turnIndexProvider(turnId));
+    final index = async.value;
+
+    Widget framed(Widget child) => Padding(
+          key: const Key('read-index-panel'),
+          padding: const EdgeInsets.fromLTRB(20, 24, 20, 40),
+          child: child,
+        );
+
+    // While the one-shot read is still in flight, render nothing (no flicker);
+    // it resolves to either the populated index or the not-indexed line.
+    if (index == null) return framed(const SizedBox.shrink());
+
+    if (index.isEmpty) {
+      return framed(
+        Row(
+          children: [
+            Icon(Icons.auto_awesome_outlined, size: 14, color: outline),
+            const SizedBox(width: 8),
+            Text(
+              'Not indexed yet',
+              style: theme.textTheme.bodySmall?.copyWith(color: outline),
+            ),
+          ],
+        ),
+      );
+    }
+
+    final count = index.propositions.length;
+    // Scrolls independently of the transcript when the index is long.
+    return framed(
+      ListView(
+        primary: false,
+        padding: EdgeInsets.zero,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.auto_awesome_outlined, size: 18, color: outline),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Generated index · $count proposition'
+                  '${count == 1 ? '' : 's'}',
+                  style: theme.textTheme.labelLarge?.copyWith(color: outline),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          for (final prop in index.propositions)
+            _PropositionBullet(text: prop.text, aspect: prop.aspect),
+          if (index.entities.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            _IndexEntityChips(names: index.entities),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
 /// The collapsible "Generated index" section at the foot of a turn (DESIGN.md
 /// §10 "Proposition index"): the human-visible view of what indexing wrote for
 /// this turn — its ~5 atomic propositions (each prefixed with its open-vocab
 /// aspect tag) and a wrap of the entities it mentions. Visually distinct and
-/// **collapsed by default**: it's metadata, not conversation.
+/// **collapsed by default**: it's metadata, not conversation. Used on narrow
+/// layouts (below the RHS-panel breakpoint), where the [_TurnIndexPanel] won't
+/// fit beside a comfortable reading column.
 ///
 /// Mirrors the reasoning toggle's [ExpansionTile] pattern. Loads once per turn
 /// via [turnIndexProvider] (cached by turnId), so it costs nothing per frame. A

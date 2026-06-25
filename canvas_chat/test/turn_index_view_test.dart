@@ -17,9 +17,12 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'helpers/synthetic_export.dart';
 
-/// The reader's collapsible "Generated index" section (DESIGN.md §10): toggling
-/// it open shows the focused turn's propositions (with aspect tags) + entity
-/// chips, and a turn with no index shows the "Not indexed yet" line.
+/// The reader's generated index (DESIGN.md §10). On a wide pane it's a
+/// persistent right-hand-side panel beside the transcript, showing the focused
+/// turn's propositions (with aspect tags) + entity chips; the header toggle
+/// hides/shows it; a not-yet-indexed turn shows "Not indexed yet". On a narrow
+/// pane the panel doesn't fit, so the index falls back to the collapsible
+/// "Generated index" section at the foot of the body.
 void main() {
   late Directory tempDir;
   late Directory assetsDir;
@@ -99,12 +102,15 @@ void main() {
     });
   }
 
-  Future<void> launch(WidgetTester tester) async {
-    // A tall surface so the short focused turn's whole body — including the
-    // trailing index section — lays out on-screen without scrolling, so the
-    // section (a lazy `ListView` trailing item) is built and its provider
-    // subscribed on first layout.
-    tester.view.physicalSize = const Size(1200, 2000);
+  /// Mounts the app at [size]. Wide (1200) puts the index in the RHS panel;
+  /// narrow (900) drops below the panel breakpoint so it falls back to the
+  /// collapsible foot section. Tall so the short focused turn's body — and any
+  /// trailing foot section — lays out on-screen without scrolling.
+  Future<void> launch(
+    WidgetTester tester, {
+    Size size = const Size(1200, 2000),
+  }) async {
+    tester.view.physicalSize = size;
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
@@ -118,9 +124,9 @@ void main() {
           sharedPreferencesProvider.overrideWithValue(prefs),
           // Keep the on-open lazy indexer AND the idle-time backfill from
           // clobbering this test's seeded index rows (both delete + re-extract a
-          // turn's propositions when the conversation opens). The index panel
-          // renders whatever is in the DB, so freezing the data makes the
-          // assertions deterministic.
+          // turn's propositions when the conversation opens). The index renders
+          // whatever is in the DB, so freezing the data makes the assertions
+          // deterministic.
           indexingEnabledProvider.overrideWithValue(false),
           backfillEnabledProvider.overrideWithValue(false),
         ],
@@ -132,8 +138,11 @@ void main() {
 
   /// Opens the forked chat and enters read mode on its current turn ("edited
   /// v2", `conv-forked:f-u3b`).
-  Future<void> openReader(WidgetTester tester) async {
-    await launch(tester);
+  Future<void> openReader(
+    WidgetTester tester, {
+    Size size = const Size(1200, 2000),
+  }) async {
+    await launch(tester, size: size);
     await tester.tap(find.text('Forked chat'));
     await tester.pumpAndSettle();
     await tester.tap(find.byTooltip('Read view'));
@@ -149,12 +158,13 @@ void main() {
       find.descendant(of: find.byType(ReadOverlay), matching: matching);
 
   /// Scrolls the reader's transcript (a lazy `ListView`) toward the bottom so
-  /// its trailing index section builds and lays out on-screen, then waits for
-  /// [target] (the header / "Not indexed yet" line) to appear. Manual bounded
-  /// drags (each below the 64px overscroll page-threshold, so they scroll in
-  /// content rather than paging to the next turn); each pump builds the section
+  /// its trailing foot index section builds and lays out on-screen, then waits
+  /// for [target] (the header / "Not indexed yet" line) to appear. Used by the
+  /// narrow-layout fallback, where the index lives at the foot of the body.
+  /// Manual bounded drags (each below the 64px overscroll page-threshold, so
+  /// they scroll in content rather than paging); each pump builds the section
   /// and resolves its one-shot drift-backed future.
-  Future<void> revealIndex(WidgetTester tester, Finder target) async {
+  Future<void> revealFootIndex(WidgetTester tester, Finder target) async {
     final body = inOverlay(find.byType(ListView)).first;
     for (var i = 0; i < 30 && target.evaluate().isEmpty; i++) {
       await tester.drag(body, const Offset(0, -50));
@@ -162,62 +172,142 @@ void main() {
     }
   }
 
-  testWidgets('the index section toggles open to show propositions '
-      '(with aspect tags) and entity chips', (tester) async {
-    await seed(tester, withIndex: true);
-    await openReader(tester);
+  group('wide layout · RHS index panel', () {
+    testWidgets('the panel shows the focused turn\'s propositions '
+        '(with aspect tags) and entity chips', (tester) async {
+      await seed(tester, withIndex: true);
+      await openReader(tester);
 
-    // The collapsed header shows the proposition count; the bullets are not yet
-    // built (collapsed by default).
-    final header = inOverlay(find.text('Generated index · 2 propositions'));
-    await revealIndex(tester, header);
-    expect(header, findsOneWidget);
-    expect(
-      inOverlay(find.textContaining('k-NN query should be optimized')),
-      findsNothing,
-    );
+      // The panel is present (its Key) and carries the proposition count header,
+      // no toggling needed — it's always-on metadata, not a collapsible.
+      expect(inOverlay(find.byKey(const Key('read-index-panel'))),
+          findsOneWidget);
+      expect(
+        inOverlay(find.text('Generated index · 2 propositions')),
+        findsOneWidget,
+      );
 
-    // Expand it.
-    await tester.tap(header);
-    await tester.pumpAndSettle();
+      // Propositions render with their open-vocab aspect tag as a [tag] prefix.
+      expect(
+        inOverlay(find.textContaining('[perf]', findRichText: true)),
+        findsOneWidget,
+      );
+      expect(
+        inOverlay(find.textContaining('[question]', findRichText: true)),
+        findsOneWidget,
+      );
+      expect(
+        inOverlay(
+          find.textContaining('optimized for speed', findRichText: true),
+        ),
+        findsOneWidget,
+      );
 
-    // Propositions render with their open-vocab aspect tag as a [tag] prefix.
-    expect(
-      inOverlay(find.textContaining('[perf]', findRichText: true)),
-      findsOneWidget,
-    );
-    expect(
-      inOverlay(find.textContaining('[question]', findRichText: true)),
-      findsOneWidget,
-    );
-    expect(
-      inOverlay(
-        find.textContaining('optimized for speed', findRichText: true),
-      ),
-      findsOneWidget,
-    );
+      // Entities render as a wrap of chips.
+      expect(inOverlay(find.widgetWithText(Chip, 'SQLite')), findsOneWidget);
+      expect(inOverlay(find.widgetWithText(Chip, 'k-NN')), findsOneWidget);
 
-    // Entities render as a wrap of chips.
-    expect(inOverlay(find.widgetWithText(Chip, 'SQLite')), findsOneWidget);
-    expect(inOverlay(find.widgetWithText(Chip, 'k-NN')), findsOneWidget);
+      await unmount(tester);
+    });
 
-    await unmount(tester);
+    testWidgets('paging to a not-yet-indexed turn shows "Not indexed yet"',
+        (tester) async {
+      await seed(tester, withIndex: true);
+      await openReader(tester);
+
+      // The focused turn is indexed; page up to its parent (no index seeded).
+      expect(
+        inOverlay(find.text('Generated index · 2 propositions')),
+        findsOneWidget,
+      );
+      await tester.tap(inOverlay(find.byTooltip('Go up')));
+      await tester.pumpAndSettle();
+
+      // The panel updates to the now-focused turn: it has no index.
+      expect(inOverlay(find.byKey(const Key('read-index-panel'))),
+          findsOneWidget);
+      expect(inOverlay(find.text('Not indexed yet')), findsOneWidget);
+      expect(inOverlay(find.textContaining('Generated index')), findsNothing);
+
+      await unmount(tester);
+    });
+
+    testWidgets('the header toggle hides and re-shows the panel',
+        (tester) async {
+      await seed(tester, withIndex: true);
+      await openReader(tester);
+
+      // Shown by default on wide layouts.
+      expect(inOverlay(find.byKey(const Key('read-index-panel'))),
+          findsOneWidget);
+
+      // Hide it.
+      await tester.tap(inOverlay(find.byTooltip('Hide generated index')));
+      await tester.pumpAndSettle();
+      expect(inOverlay(find.byKey(const Key('read-index-panel'))), findsNothing);
+      // The index isn't lost — it falls back to the collapsible foot section.
+      await revealFootIndex(
+        tester,
+        inOverlay(find.text('Generated index · 2 propositions')),
+      );
+      expect(
+        inOverlay(find.text('Generated index · 2 propositions')),
+        findsOneWidget,
+      );
+
+      // Re-show it.
+      await tester.tap(inOverlay(find.byTooltip('Show generated index')));
+      await tester.pumpAndSettle();
+      expect(inOverlay(find.byKey(const Key('read-index-panel'))),
+          findsOneWidget);
+
+      await unmount(tester);
+    });
   });
 
-  testWidgets('a not-yet-indexed turn shows the "Not indexed yet" line',
-      (tester) async {
-    await seed(tester, withIndex: false);
-    await openReader(tester);
+  group('narrow layout · collapsible foot fallback', () {
+    testWidgets('the index falls back to the collapsible foot section',
+        (tester) async {
+      await seed(tester, withIndex: true);
+      await openReader(tester, size: const Size(900, 2000));
 
-    final line = inOverlay(find.text('Not indexed yet'));
-    await revealIndex(tester, line);
-    expect(line, findsOneWidget);
-    // No index header / toggle for an unindexed turn.
-    expect(
-      inOverlay(find.textContaining('Generated index')),
-      findsNothing,
-    );
+      // No RHS panel below the breakpoint, and no panel toggle in the header.
+      expect(inOverlay(find.byKey(const Key('read-index-panel'))), findsNothing);
+      expect(inOverlay(find.byTooltip('Hide generated index')), findsNothing);
+      expect(inOverlay(find.byTooltip('Show generated index')), findsNothing);
 
-    await unmount(tester);
+      // The collapsible foot section is present (collapsed by default).
+      final header = inOverlay(find.text('Generated index · 2 propositions'));
+      await revealFootIndex(tester, header);
+      expect(header, findsOneWidget);
+      expect(
+        inOverlay(find.textContaining('optimized for speed')),
+        findsNothing,
+      );
+
+      // Expanding it shows the propositions + entity chips.
+      await tester.tap(header);
+      await tester.pumpAndSettle();
+      expect(
+        inOverlay(find.textContaining('[perf]', findRichText: true)),
+        findsOneWidget,
+      );
+      expect(inOverlay(find.widgetWithText(Chip, 'SQLite')), findsOneWidget);
+
+      await unmount(tester);
+    });
+
+    testWidgets('a not-yet-indexed turn shows the "Not indexed yet" line',
+        (tester) async {
+      await seed(tester, withIndex: false);
+      await openReader(tester, size: const Size(900, 2000));
+
+      final line = inOverlay(find.text('Not indexed yet'));
+      await revealFootIndex(tester, line);
+      expect(line, findsOneWidget);
+      expect(inOverlay(find.textContaining('Generated index')), findsNothing);
+
+      await unmount(tester);
+    });
   });
 }

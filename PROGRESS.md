@@ -19,6 +19,26 @@ shortcuts, Android input, import warnings).
 
 ## Log
 
+- 2026-06-25 · reader index → RHS panel · moved the generated-index view from a
+  foot-of-turn-body `ExpansionTile` to a persistent right-hand-side panel: on a
+  wide pane (`_body` width ≥ 720px) the reader splits into a `Row` — the
+  reading-width transcript (capped + centered within its `Expanded` area) on the
+  left, a fixed 320px index column on the right, separated by a `VerticalDivider`.
+  The panel (`Key('read-index-panel')`) carries a "Generated index · N
+  proposition(s)" header, the propositions as `_PropositionBullet`s with their
+  `[aspect]` tags, and a wrap of `_IndexEntityChips`; it scrolls independently of
+  the transcript and updates as you page (watches `turnIndexProvider(focusedTurnId)`,
+  one subscribe per turn — off the frame path). An un-indexed turn shows a subtle
+  "Not indexed yet" line, not an empty panel. A header toggle
+  (`auto_awesome`/`auto_awesome_outlined`, "Hide/Show generated index", default
+  shown, wide-only) reclaims the width. Below the breakpoint (narrow windows /
+  Android) the panel can't fit, so the index falls back to the prior collapsible
+  foot section (`TurnBody.showFootIndex`) — never shown twice, never lost.
+  Reuses `turnIndexProvider`/`TurnIndex` and the inner bullet/chip widgets; lazy
+  transcript `ListView` and the no-`Opacity` perf fixes untouched. analyze clean
+  + 5 index tests (wide panel + paging + toggle, narrow fallback ×2), full suite
+  green (310).
+
 - 2026-06-25 · reader index panel · surfaced the per-turn generated index
   (DESIGN.md §10) in the reader, previously written by indexing but invisible.
   New collapsible "Generated index" section at the foot of the turn body
