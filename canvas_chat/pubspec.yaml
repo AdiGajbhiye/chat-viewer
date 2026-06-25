@@ -54,6 +54,9 @@ dev_dependencies:
     sdk: flutter
   build_runner: ^2.7.1
   drift_dev: ^2.28.3
+  # Used by the v2→v3 migration test to hand-build a schema-v2 database file
+  # (drift's native backend already depends on it transitively).
+  sqlite3: ^3.3.2
 
   # The "flutter_lints" package below contains a set of recommended lints to
   # encourage good coding practices. The lint set provided by the package is

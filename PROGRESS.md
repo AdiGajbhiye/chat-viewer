@@ -15,6 +15,21 @@ shortcuts, Android input, import warnings).
 
 ## Log
 
+- 2026-06-25 · M6.1 · drift migration v3 — the Phase-2 schema foundation
+  (DESIGN.md §10), schema only, no behavior change (nothing reads the new
+  tables yet). Adds the Project tier (`projects`) plus
+  `propositions`/`entities`/`turn_entities`/`soft_edges`/`facts`/`fact_sources`,
+  and three `conversations` columns (`project_id` default 'default',
+  `index_state` default 0=notIndexed, `indexed_at`). Embedding columns are raw
+  BLOB (float32 LE encoded later). v2→v3 is additive: creates the tables, adds
+  the columns, seeds the single 'default' project, backfills every existing
+  conversation to it, and the same indexes/seed run on `onCreate` so fresh and
+  migrated DBs match. `propositions.text`/`facts.text` keep that SQL column name
+  via `.named('text')` (getters `propText`/`factText` — drift reserves a bare
+  `text` getter). schemaVersion 2→3. Hand-written migration test
+  (`migration_v3_test.dart`) builds a populated v2 DB, upgrades it, and asserts
+  new tables/columns, the default project, and survived+backfilled rows. analyze
+  clean; 158 tests pass.
 - 2026-06-25 · design · Phase 2 architecture (DESIGN.md §10) — design only,
   nothing built. Continuing a long, forked session retrieves context instead of
   walking the full ancestry: per-turn proposition index (≈5 atomic, coref-resolved

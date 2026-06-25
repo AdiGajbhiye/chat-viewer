@@ -29,6 +29,19 @@ class Conversations extends Table {
   /// Importer plugin id, e.g. 'chatgpt_export'.
   TextColumn get source => text()();
 
+  /// Project tier (DESIGN.md §10). Conceptual FK to `projects.id`; defaults to
+  /// the single 'default' project created by migration v3.
+  TextColumn get projectId =>
+      text().withDefault(const Constant('default'))();
+
+  /// Lazy-index state machine (DESIGN.md §10):
+  /// 0=notIndexed 1=indexing 2=indexed 3=stale.
+  IntColumn get indexState => integer().withDefault(const Constant(0))();
+
+  /// Milliseconds since epoch the conversation was last indexed; NULL until
+  /// indexed.
+  IntColumn get indexedAt => integer().nullable()();
+
   @override
   Set<Column> get primaryKey => {id};
 }
@@ -103,14 +116,132 @@ class Imports extends Table {
   TextColumn get warningsJson => text().withDefault(const Constant('[]'))();
 }
 
+/// `projects` table: the Project tier above Conversation (DESIGN.md §10). Every
+/// Phase-2 row carries a `project_id` so retrieval can range across a project.
+class Projects extends Table {
+  TextColumn get id => text()();
+  TextColumn get name => text().withDefault(const Constant(''))();
+
+  /// Milliseconds since epoch.
+  IntColumn get createdAt => integer().nullable()();
+
+  @override
+  Set<Column> get primaryKey => {id};
+}
+
+/// `propositions` table (DESIGN.md §10): ~5 atomic, standalone, coref-resolved
+/// statements per indexed turn, each separately retrievable. `conversation_id`
+/// and `project_id` are denormalized so retrieval can scope-filter without a
+/// join. `embedding` is a raw float32 little-endian BLOB; `embedding_model`
+/// records which model produced it so re-embedding can be invalidated.
+class Propositions extends Table {
+  TextColumn get id => text()();
+  TextColumn get turnId => text().references(Turns, #id)();
+  TextColumn get conversationId => text()();
+  TextColumn get projectId => text()();
+
+  /// The proposition statement. DB column is `text` (DESIGN.md §10); the getter
+  /// is renamed because drift reserves a bare `text` getter for its column
+  /// builder.
+  TextColumn get propText => text().named('text')();
+
+  /// Open-vocab aspect tag (not fixed buckets).
+  TextColumn get aspect => text().nullable()();
+
+  /// float32[] little-endian.
+  BlobColumn get embedding => blob().nullable()();
+  TextColumn get embeddingModel => text().nullable()();
+
+  /// Milliseconds since epoch.
+  IntColumn get createdAt => integer().nullable()();
+
+  @override
+  Set<Column> get primaryKey => {id};
+}
+
+/// `entities` table (DESIGN.md §10): named things mentioned across turns; the
+/// wiki's backbone. `normalized` is the lookup key for de-duplication.
+class Entities extends Table {
+  TextColumn get id => text()();
+  TextColumn get projectId => text()();
+  TextColumn get name => text()();
+  TextColumn get normalized => text()();
+
+  @override
+  Set<Column> get primaryKey => {id};
+}
+
+/// `turn_entities` table (DESIGN.md §10): the m:n edge between turns and the
+/// entities they mention — entity soft-edges and wiki backlinks.
+class TurnEntities extends Table {
+  TextColumn get entityId => text().references(Entities, #id)();
+  TextColumn get turnId => text().references(Turns, #id)();
+}
+
+/// `soft_edges` table (DESIGN.md §10): precomputed inter-turn relations rendered
+/// as a canvas layer. Symmetric, stored once canonicalized so `from_turn_id <
+/// to_turn_id`. `kind` ∈ semantic | entity | crossSession.
+class SoftEdges extends Table {
+  TextColumn get fromTurnId => text()();
+  TextColumn get toTurnId => text()();
+  TextColumn get kind => text()();
+  RealColumn get weight => real()();
+  TextColumn get projectId => text()();
+}
+
+/// `facts` table (DESIGN.md §10, Layer 2): canonical statements a user commits
+/// from a turn. `conversation_id` NULL = project-wide; set = pinned to a
+/// session. `status` ∈ active | superseded; `supersedes_id` links the
+/// superseded fact. `embedding` is a raw float32 little-endian BLOB.
+class Facts extends Table {
+  TextColumn get id => text()();
+  TextColumn get projectId => text()();
+  TextColumn get conversationId => text().nullable()();
+
+  /// The committed statement. DB column is `text` (DESIGN.md §10); the getter is
+  /// renamed because drift reserves a bare `text` getter for its column builder.
+  TextColumn get factText => text().named('text')();
+  TextColumn get status => text()();
+  TextColumn get supersedesId => text().nullable()();
+
+  /// float32[] little-endian.
+  BlobColumn get embedding => blob().nullable()();
+
+  /// Milliseconds since epoch.
+  IntColumn get createdAt => integer().nullable()();
+
+  @override
+  Set<Column> get primaryKey => {id};
+}
+
+/// `fact_sources` table (DESIGN.md §10): a fact's provenance back to its source
+/// turn(s) — the wiki's click-through.
+class FactSources extends Table {
+  TextColumn get factId => text().references(Facts, #id)();
+  TextColumn get turnId => text().references(Turns, #id)();
+}
+
 @DriftDatabase(
-  tables: [Conversations, Turns, TurnAssets, CanvasStates, Imports],
+  tables: [
+    Conversations,
+    Turns,
+    TurnAssets,
+    CanvasStates,
+    Imports,
+    Projects,
+    Propositions,
+    Entities,
+    TurnEntities,
+    SoftEdges,
+    Facts,
+    FactSources,
+  ],
 )
 class AppDatabase extends _$AppDatabase {
   AppDatabase(super.e);
 
   @override
-  int get schemaVersion => 2;
+  int get schemaVersion => 3;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -146,6 +277,10 @@ class AppDatabase extends _$AppDatabase {
             'INSERT INTO turns_fts(rowid, prompt_md, response_md) '
             'VALUES (new.rowid, new.prompt_md, new.response_md); END',
           );
+          // Phase-2 retrieval indexes (DESIGN.md §10). A fresh DB seeds the
+          // single 'default' project so conversations.project_id is valid.
+          await _createPhase2Indexes();
+          await _seedDefaultProject();
         },
         onUpgrade: (m, from, to) async {
           if (from < 2) {
@@ -159,11 +294,68 @@ class AppDatabase extends _$AppDatabase {
               'WHERE t.conversation_id = conversations.id)',
             );
           }
+          if (from < 3) {
+            // v3 (DESIGN.md §10): the Project tier + the retrieval/facts layer.
+            // Additive only — existing canvas_state/turns/turn_assets rows are
+            // untouched. Create the new tables, add the three conversation
+            // columns, seed the single 'default' project, and backfill every
+            // existing conversation to it (index_state defaults to notIndexed).
+            await m.createTable(projects);
+            await m.createTable(propositions);
+            await m.createTable(entities);
+            await m.createTable(turnEntities);
+            await m.createTable(softEdges);
+            await m.createTable(facts);
+            await m.createTable(factSources);
+            await m.addColumn(conversations, conversations.projectId);
+            await m.addColumn(conversations, conversations.indexState);
+            await m.addColumn(conversations, conversations.indexedAt);
+            await _createPhase2Indexes();
+            await _seedDefaultProject();
+            // Defaults already stamp project_id='default'/index_state=0 on
+            // existing rows, but set them explicitly so the backfill is obvious
+            // and independent of column-default behavior.
+            await customStatement(
+              "UPDATE conversations SET project_id = 'default', index_state = 0",
+            );
+          }
         },
         beforeOpen: (details) async {
           await customStatement('PRAGMA foreign_keys = ON');
         },
       );
+
+  /// Phase-2 retrieval indexes (DESIGN.md §10), shared by `onCreate` and the
+  /// v2→v3 upgrade so a fresh and a migrated DB end up identical.
+  Future<void> _createPhase2Indexes() async {
+    await customStatement(
+      'CREATE INDEX idx_propositions_project ON propositions (project_id)',
+    );
+    await customStatement(
+      'CREATE INDEX idx_propositions_turn ON propositions (turn_id)',
+    );
+    await customStatement(
+      'CREATE INDEX idx_turn_entities_turn ON turn_entities (turn_id)',
+    );
+    await customStatement(
+      'CREATE INDEX idx_turn_entities_entity ON turn_entities (entity_id)',
+    );
+    await customStatement(
+      'CREATE INDEX idx_soft_edges_project ON soft_edges (project_id)',
+    );
+    await customStatement(
+      'CREATE INDEX idx_fact_sources_fact ON fact_sources (fact_id)',
+    );
+  }
+
+  /// Inserts the single 'default' project (DESIGN.md §10) if absent.
+  /// `INSERT OR IGNORE` keeps it idempotent across create/upgrade paths.
+  Future<void> _seedDefaultProject() async {
+    await customStatement(
+      "INSERT OR IGNORE INTO projects (id, name, created_at) "
+      "VALUES ('default', 'Default', NULL)",
+    );
+  }
 
   /// Word-based FTS search over prompts/responses; returns matching turn ids,
   /// best match first. Each whitespace-separated term is quoted and prefix-
