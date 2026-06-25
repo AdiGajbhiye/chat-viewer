@@ -449,8 +449,8 @@ No canvas/graph package — custom, per §6.
 Phase 2 turns the viewer into a **research / exploration workspace**: you keep
 working a long, heavily-forked session and the app distills it into a condensed,
 high-signal design doc. The existing turn graph, importer and storage stay as-is.
-Built and shipped as milestones M6–M9 (see PROGRESS.md); the one deferred item is
-real-engine visual verification of the new UI.
+Built and shipped as milestones M6–M9 (see PROGRESS.md); the new UI is verified on
+the real macOS/Impeller engine (`integration_test/phase2_visual_test.dart`).
 
 The driving constraint: continuing a long session can't fit the whole history in
 the context window — and for a drifting, multi-topic research conversation the

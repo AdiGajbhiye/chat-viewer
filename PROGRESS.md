@@ -19,6 +19,17 @@ shortcuts, Android input, import warnings).
 
 ## Log
 
+- 2026-06-25 · verify · real-engine (macOS/Impeller) visual pass of the Phase 2
+  UI. New driver `integration_test/phase2_visual_test.dart` (mirrors
+  `chunk_toolbar_test`) seeds an entity-rich forked conversation, indexes it +
+  commits a fact, then drives + screenshots each surface to `build/phase2_shots/`.
+  All 3 driver tests green; 8 shots confirm: graph + dashed soft-edge layer
+  (toggle on→arcs draw, distinct from structural edges), the
+  branch|session|project|all scope popup, the "Indexing N/M…" chip, the read-mode
+  commit pin + "Committed as a fact" SnackBar (fact count 1→2), and the project
+  wiki (topics/entities-with-counts/facts overview + entity backlink page). No
+  render glitches. Closes the deferred visual-verification item. (Driver runs
+  debug-mode, but macOS uses Impeller in every mode, so rendering is real.)
 - 2026-06-25 · Phase 2 complete · all of M6.1–M9.3 landed; independent full run on
   the final tree: `flutter analyze` clean, `flutter test` **302 passing**. The
   viewer is now a retrieval-backed research workspace — lazy per-session indexing,
