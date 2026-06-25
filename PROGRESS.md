@@ -19,6 +19,21 @@ shortcuts, Android input, import warnings).
 
 ## Log
 
+- 2026-06-25 · reader index panel · surfaced the per-turn generated index
+  (DESIGN.md §10) in the reader, previously written by indexing but invisible.
+  New collapsible "Generated index" section at the foot of the turn body
+  (mirrors the 🧠 reasoning ExpansionTile), default collapsed, header carries the
+  proposition count; expanded it lists the propositions as bullets, each
+  prefixed with its open-vocab aspect as a `[tag]`, plus a wrap of entity chips
+  echoing the wiki's look. A not-yet-indexed turn shows a subtle "Not indexed
+  yet" line instead of an empty box. Data via `turnIndexProvider`
+  (FutureProvider.family by turnId, cached per turn, off the frame path) over a
+  new `AppDatabase.turnIndex` → `TurnIndex` (propositions text+aspect ordered by
+  id; entity names joined `turn_entities`→`entities`, deduped, normalized order).
+  Trailing lazy-ListView item, no Opacity (prior perf fixes preserved). analyze
+  clean + 5 tests (3 query: stable order / dedupe / empty; 2 widget: toggle
+  shows bullets+aspect tags+entity chips, and the not-indexed line — seeds frozen
+  by overriding indexing/backfill enabled providers).
 - 2026-06-25 · verify · real-engine (macOS/Impeller) visual pass of the Phase 2
   UI. New driver `integration_test/phase2_visual_test.dart` (mirrors
   `chunk_toolbar_test`) seeds an entity-rich forked conversation, indexes it +

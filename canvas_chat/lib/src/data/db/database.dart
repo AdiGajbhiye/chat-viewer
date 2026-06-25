@@ -554,4 +554,54 @@ class AppDatabase extends _$AppDatabase {
       }
     });
   }
+
+  /// The generated index for one turn (DESIGN.md §10 "Proposition index"): the
+  /// turn's propositions (each with its open-vocab aspect tag) plus the names of
+  /// the entities it mentions — the human-visible view of what indexing wrote.
+  ///
+  /// Both lists are ordered stably (propositions by id, entity names
+  /// case-insensitively) so a repeated read renders identically; entity names
+  /// are deduped (a turn links each entity once). Returns empty lists for a turn
+  /// that hasn't been indexed yet.
+  Future<TurnIndex> turnIndex(String turnId) async {
+    final props = await (select(propositions)
+          ..where((p) => p.turnId.equals(turnId))
+          ..orderBy([(p) => OrderingTerm.asc(p.id)]))
+        .get();
+
+    final names = await (selectOnly(turnEntities)
+          ..addColumns([entities.name])
+          ..join([
+            innerJoin(
+              entities,
+              entities.id.equalsExp(turnEntities.entityId),
+            ),
+          ])
+          ..where(turnEntities.turnId.equals(turnId))
+          ..orderBy([OrderingTerm.asc(entities.normalized)]))
+        .map((row) => row.read(entities.name)!)
+        .get();
+
+    return TurnIndex(
+      propositions: [
+        for (final p in props) (text: p.propText, aspect: p.aspect),
+      ],
+      // Dedupe while preserving the normalized order (a turn can, defensively,
+      // link two surfaces of the same name).
+      entities: names.toSet().toList(),
+    );
+  }
+}
+
+/// The generated index of a single turn, as surfaced in the reader (DESIGN.md
+/// §10): the turn's propositions (atomic standalone statements, each with its
+/// open-vocab aspect tag) and the names of the entities it mentions. Both lists
+/// are empty for a not-yet-indexed turn.
+class TurnIndex {
+  const TurnIndex({required this.propositions, required this.entities});
+
+  final List<({String text, String? aspect})> propositions;
+  final List<String> entities;
+
+  bool get isEmpty => propositions.isEmpty && entities.isEmpty;
 }

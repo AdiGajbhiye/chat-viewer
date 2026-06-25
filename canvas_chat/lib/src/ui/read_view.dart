@@ -538,6 +538,12 @@ class TurnBody extends ConsumerWidget {
             const _GeneratingIndicator(),
           ],
         ],
+        // The generated index for this turn (DESIGN.md §10), as a collapsible
+        // metadata section at the very end of the body so it never pushes the
+        // conversation content down. A trailing ListView item, so it costs
+        // nothing until scrolled into view.
+        const SizedBox(height: 8),
+        _TurnIndexSection(turnId: turn.id),
       ],
     );
   }
@@ -635,6 +641,144 @@ class TurnBody extends ConsumerWidget {
       .split('\n')
       .map((line) => line.isEmpty ? '>' : '> $line')
       .join('\n');
+}
+
+/// The collapsible "Generated index" section at the foot of a turn (DESIGN.md
+/// §10 "Proposition index"): the human-visible view of what indexing wrote for
+/// this turn — its ~5 atomic propositions (each prefixed with its open-vocab
+/// aspect tag) and a wrap of the entities it mentions. Visually distinct and
+/// **collapsed by default**: it's metadata, not conversation.
+///
+/// Mirrors the reasoning toggle's [ExpansionTile] pattern. Loads once per turn
+/// via [turnIndexProvider] (cached by turnId), so it costs nothing per frame. A
+/// turn that hasn't been indexed yet (indexing runs lazily on open) shows a
+/// subtle "Not indexed yet" line instead of an empty box.
+class _TurnIndexSection extends ConsumerWidget {
+  const _TurnIndexSection({required this.turnId});
+
+  final String turnId;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final theme = Theme.of(context);
+    final async = ref.watch(turnIndexProvider(turnId));
+    final index = async.value;
+    // While the one-shot read is still in flight, render nothing (no flicker);
+    // it resolves to either the populated index or the not-indexed line.
+    if (index == null) return const SizedBox.shrink();
+
+    final outline = theme.colorScheme.outline;
+    if (index.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.only(top: 4),
+        child: Row(
+          children: [
+            Icon(Icons.auto_awesome_outlined, size: 14, color: outline),
+            const SizedBox(width: 8),
+            Text(
+              'Not indexed yet',
+              style: theme.textTheme.bodySmall?.copyWith(color: outline),
+            ),
+          ],
+        ),
+      );
+    }
+
+    final count = index.propositions.length;
+    return ExpansionTile(
+      tilePadding: EdgeInsets.zero,
+      leading: Icon(Icons.auto_awesome_outlined, size: 18, color: outline),
+      title: Text(
+        'Generated index · $count proposition${count == 1 ? '' : 's'}',
+        style: theme.textTheme.labelLarge?.copyWith(color: outline),
+      ),
+      childrenPadding: const EdgeInsets.only(left: 4, bottom: 12),
+      expandedCrossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (final prop in index.propositions)
+          _PropositionBullet(text: prop.text, aspect: prop.aspect),
+        if (index.entities.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          _IndexEntityChips(names: index.entities),
+        ],
+      ],
+    );
+  }
+}
+
+/// One proposition as a bullet, its open-vocab aspect tag rendered as a small
+/// `[aspect]` chip prefix (omitted when the proposition has no aspect). Short
+/// plain text — a [Text], not markdown.
+class _PropositionBullet extends StatelessWidget {
+  const _PropositionBullet({required this.text, required this.aspect});
+
+  final String text;
+  final String? aspect;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final aspect = this.aspect?.trim();
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(top: 2, right: 8),
+            child: Icon(Icons.circle, size: 6, color: scheme.outline),
+          ),
+          Expanded(
+            child: Text.rich(
+              TextSpan(
+                children: [
+                  if (aspect != null && aspect.isNotEmpty)
+                    TextSpan(
+                      text: '[$aspect] ',
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: scheme.primary,
+                        fontFeatures: const [FontFeature.tabularFigures()],
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  TextSpan(text: text),
+                ],
+                style: theme.textTheme.bodyMedium
+                    ?.copyWith(color: scheme.onSurface),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// A wrap of the turn's entity chips, echoing the wiki's entity-chip look
+/// (`wiki_view.dart`) for visual consistency. Non-interactive here — the reader
+/// surfaces the index, it isn't the wiki's hyperlink graph.
+class _IndexEntityChips extends StatelessWidget {
+  const _IndexEntityChips({required this.names});
+
+  final List<String> names;
+
+  @override
+  Widget build(BuildContext context) {
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        for (final name in names)
+          Chip(
+            avatar: const Icon(Icons.link, size: 16),
+            label: Text(name),
+            visualDensity: VisualDensity.compact,
+            materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          ),
+      ],
+    );
+  }
 }
 
 /// A small spinner + label shown in the reader while a forked branch's

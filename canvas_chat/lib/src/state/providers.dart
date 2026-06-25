@@ -95,6 +95,18 @@ final turnAssetsProvider =
       .get();
 });
 
+/// The generated index for one turn (DESIGN.md §10 "Proposition index"): the
+/// turn's propositions (text + aspect tag) and the entities it mentions, for the
+/// reader's collapsible "Generated index" section. A one-shot read cached per
+/// `turnId` (indexing only writes these on session open, which the reader isn't
+/// watching live), so paging to a turn loads it once, not per frame. Returns an
+/// empty [TurnIndex] for a turn that hasn't been indexed yet.
+final turnIndexProvider =
+    FutureProvider.autoDispose.family<TurnIndex, String>((ref, turnId) {
+  final db = ref.watch(databaseProvider);
+  return db.turnIndex(turnId);
+});
+
 /// Light / dark / system theme selection. Defaults to following the OS;
 /// the sidebar toggle flips it to an explicit light or dark mode.
 final themeModeProvider =
