@@ -18,6 +18,7 @@ import 'canvas_viewport.dart';
 import 'edge_painter.dart';
 import 'indexing_indicator.dart';
 import 'node_card.dart';
+import 'soft_edge_painter.dart';
 
 /// The two views the bottom-right toggle switches between: [graph] is the
 /// pannable canvas (the map); [read] is the full-screen reading pager. Both are
@@ -231,15 +232,27 @@ class _CanvasViewState extends ConsumerState<CanvasView>
                 ),
               ),
             ),
-            // The view toggle (graph · read), always visible bottom-right.
+            // Bottom-right controls cluster: the soft-edge layer toggle
+            // (graph-only, since the associative layer is a map overlay) stacked
+            // above the always-visible view toggle (graph · read).
             Positioned(
               right: 8,
               bottom: 8,
               child: SafeArea(
-                child: ViewModeToggle(
-                  mode: _viewMode,
-                  onGraph: () => _setViewMode(CanvasViewMode.graph),
-                  onRead: () => _setViewMode(CanvasViewMode.read),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    if (_viewMode == CanvasViewMode.graph) ...[
+                      const SoftEdgesToggle(),
+                      const SizedBox(height: 8),
+                    ],
+                    ViewModeToggle(
+                      mode: _viewMode,
+                      onGraph: () => _setViewMode(CanvasViewMode.graph),
+                      onRead: () => _setViewMode(CanvasViewMode.read),
+                    ),
+                  ],
                 ),
               ),
             ),
@@ -472,6 +485,18 @@ class _CanvasViewState extends ConsumerState<CanvasView>
         if (cull.overlaps(CanvasMetrics.cellRect(cell))) cell,
     ];
 
+    // Soft-edge layer (DESIGN.md §10): opt-in and default off, so it does no
+    // work — not even the DB read — until the toggle is on. Sits just above the
+    // structural edges and below the cards, so the associative arcs read behind
+    // the nodes and never cover card text.
+    final showSoftEdges = ref.watch(showSoftEdgesProvider);
+    final softEdges = showSoftEdges
+        ? ref
+                .watch(softEdgesForConversationProvider(widget.conversationId))
+                .value ??
+            const <SoftEdge>[]
+        : const <SoftEdge>[];
+
     return SizedBox(
       width: contentSize.width,
       height: contentSize.height,
@@ -490,6 +515,20 @@ class _CanvasViewState extends ConsumerState<CanvasView>
               ),
             ),
           ),
+          if (showSoftEdges)
+            Positioned.fill(
+              child: RepaintBoundary(
+                child: CustomPaint(
+                  painter: SoftEdgePainter(
+                    layout: layout,
+                    edges: softEdges,
+                    visibleRect: cull,
+                    semanticColor: scheme.tertiary,
+                    entityColor: scheme.secondary,
+                  ),
+                ),
+              ),
+            ),
           for (final cell in visibleCells)
             Positioned.fromRect(
               rect: CanvasMetrics.cellRect(cell),
@@ -920,6 +959,41 @@ class _IconButton extends StatelessWidget {
         style: IconButton.styleFrom(
           minimumSize: const Size(28, 28),
           tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        ),
+      ),
+    );
+  }
+}
+
+/// A small, unobtrusive toggle for the soft-edge overlay (DESIGN.md §10),
+/// pinned bottom-right above the view switcher. **Default off** — the
+/// associative layer is opt-in, so this starts unselected and flipping it
+/// shows/hides the arcs. A [ConsumerWidget] reading [showSoftEdgesProvider] so
+/// only the button rebuilds when the layer is toggled.
+class SoftEdgesToggle extends ConsumerWidget {
+  const SoftEdgesToggle({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final scheme = Theme.of(context).colorScheme;
+    final on = ref.watch(showSoftEdgesProvider);
+    return Material(
+      elevation: 3,
+      color: scheme.surfaceContainerHighest,
+      borderRadius: BorderRadius.circular(24),
+      child: Padding(
+        padding: const EdgeInsets.all(4),
+        child: IconButton(
+          icon: const Icon(Icons.hub_outlined),
+          tooltip: on ? 'Hide related links' : 'Show related links',
+          isSelected: on,
+          onPressed: () => ref.read(showSoftEdgesProvider.notifier).toggle(),
+          style: IconButton.styleFrom(
+            backgroundColor: on ? scheme.primaryContainer : Colors.transparent,
+            foregroundColor: on
+                ? scheme.onPrimaryContainer
+                : scheme.onSurfaceVariant,
+          ),
         ),
       ),
     );

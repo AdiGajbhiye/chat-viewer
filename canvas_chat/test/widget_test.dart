@@ -7,6 +7,7 @@ import 'package:canvas_chat/src/data/import/export_source.dart';
 import 'package:canvas_chat/src/state/providers.dart';
 import 'package:canvas_chat/src/ui/canvas/canvas_view.dart';
 import 'package:canvas_chat/src/ui/canvas/node_card.dart';
+import 'package:canvas_chat/src/ui/canvas/soft_edge_painter.dart';
 import 'package:canvas_chat/src/ui/read_view.dart';
 import 'package:drift/native.dart';
 import 'package:flutter/foundation.dart';
@@ -838,6 +839,117 @@ void main() {
 
       await tester.tap(find.text('Close'));
       await tester.pumpAndSettle();
+      await unmountApp(tester);
+    });
+  });
+
+  group('soft edges (M8.3)', () {
+    /// The soft-edge layer's painter, if the layer is in the tree.
+    Finder softEdgeLayer() => find.byWidgetPredicate(
+        (w) => w is CustomPaint && w.painter is SoftEdgePainter);
+
+    /// Seeds two intra-conversation soft edges into the forked fixture (a
+    /// semantic + an entity link between real, distant turns). Must run in
+    /// [WidgetTester.runAsync] — it's real DB I/O.
+    Future<void> seedSoftEdges(WidgetTester tester) async {
+      await tester.runAsync(() async {
+        await db.batch((b) => b.insertAll(db.softEdges, [
+              SoftEdgesCompanion.insert(
+                fromTurnId: 'conv-forked:f-a1',
+                toTurnId: 'conv-forked:f-a2',
+                kind: 'semantic',
+                weight: 0.8,
+                projectId: 'default',
+              ),
+              SoftEdgesCompanion.insert(
+                fromTurnId: 'conv-forked:f-a1',
+                toTurnId: 'conv-forked:f-u3b',
+                kind: 'entity',
+                weight: 0.4,
+                projectId: 'default',
+              ),
+            ]));
+      });
+    }
+
+    Future<void> openForkedChat(WidgetTester tester) async {
+      await seed(tester);
+      await seedSoftEdges(tester);
+      await tester.pumpWidget(app());
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Forked chat'));
+      await tester.pumpAndSettle();
+      // Fit so every cell (hence every soft-edge endpoint) is built/in view.
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyF);
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('the soft-edge layer is off by default and toggles on/off',
+        (tester) async {
+      await openForkedChat(tester);
+
+      // Default OFF: the toggle is present (graph mode) but the layer is not.
+      expect(find.byType(SoftEdgesToggle), findsOneWidget);
+      expect(softEdgeLayer(), findsNothing);
+
+      // Flip on → the soft-edge painter layer appears.
+      await tester.tap(find.byTooltip('Show related links'));
+      await tester.pumpAndSettle();
+      expect(softEdgeLayer(), findsOneWidget);
+
+      // The painter carries exactly the two renderable intra-conversation edges.
+      final paint = tester.widget<CustomPaint>(softEdgeLayer());
+      final painter = paint.painter! as SoftEdgePainter;
+      expect(painter.edges, hasLength(2));
+      expect(
+        painter.edges.map((e) => e.kind).toSet(),
+        {'semantic', 'entity'},
+      );
+
+      // The structural cards/edges are unchanged — the layer is purely additive.
+      expect(find.byType(NodeCard), findsNWidgets(5));
+
+      // Flip off → the layer is removed again.
+      await tester.tap(find.byTooltip('Hide related links'));
+      await tester.pumpAndSettle();
+      expect(softEdgeLayer(), findsNothing);
+
+      await unmountApp(tester);
+    });
+
+    testWidgets('the soft-edge layer sits behind a RepaintBoundary (perf)',
+        (tester) async {
+      await openForkedChat(tester);
+      await tester.tap(find.byTooltip('Show related links'));
+      await tester.pumpAndSettle();
+
+      // The perf-sensitive structure: the soft-edge CustomPaint is wrapped in a
+      // RepaintBoundary, so a pan re-composites its cached layer instead of
+      // repainting it every viewport tick (DESIGN.md §6 "Performance").
+      expect(
+        find.ancestor(
+          of: softEdgeLayer(),
+          matching: find.byType(RepaintBoundary),
+        ),
+        findsWidgets,
+      );
+
+      await unmountApp(tester);
+    });
+
+    testWidgets('the toggle is graph-only and absent in read mode',
+        (tester) async {
+      await openForkedChat(tester);
+      expect(find.byType(SoftEdgesToggle), findsOneWidget);
+
+      await enterReadMode(tester);
+      // The associative overlay is a map control; it's hidden while reading.
+      expect(find.byType(SoftEdgesToggle), findsNothing);
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+      expect(find.byType(SoftEdgesToggle), findsOneWidget);
+
       await unmountApp(tester);
     });
   });

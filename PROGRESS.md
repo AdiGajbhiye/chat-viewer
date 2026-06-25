@@ -15,6 +15,41 @@ shortcuts, Android input, import warnings).
 
 ## Log
 
+- 2026-06-25 · M8.3 · soft-edge canvas layer (DESIGN.md §10 "Soft edges":
+  "rendered as a canvas layer") — visualizes the precomputed `soft_edges` (M8.1),
+  toggleable and **default off**. **Provider**:
+  `softEdgesForConversationProvider` (FutureProvider.autoDispose.family by
+  conversationId, `state/providers.dart`) — one-shot read of `soft_edges`
+  keeping only the **renderable intra-conversation** edges (both endpoints turns
+  in this conversation; `crossSession` and any dangling/out-of-conversation
+  endpoint dropped — cross-canvas rendering is M9.3). **Painter**:
+  `SoftEdgePainter` (`ui/canvas/soft_edge_painter.dart`) maps each edge's
+  `from/toTurnId` to its two `GridCell` centres and draws a **bowed, dashed
+  quadratic arc** (perpendicular control point, bow ∝ span, capped) so it reads
+  as an associative link between distant cells, deliberately distinct from the
+  solid structural edges. Visual encoding: **kind → colour** (semantic =
+  `scheme.tertiary`, entity = `scheme.secondary`), **weight → alpha + width**
+  (faint band `α 0.18–0.60`, width `1.2–3.0`) so it stays a faint overlay that
+  never obscures card text. **Layer placement**: in `_buildNodeLayer`
+  (`canvas_view.dart`) a `RepaintBoundary`+`CustomPaint` **just above the
+  structural `EdgePainter`, below the node cards** — same decoupled-layer perf
+  pattern (built once into the `ListenableBuilder` child, not rebuilt/repainted
+  per pan/zoom tick; same `_builtCull` rect; painter culls edges outside the
+  inflated visible rect, `shouldRepaint` only on layout/edges/cull/colour). **No
+  `Opacity`** — color alpha only (prior perf fix preserved). **Toggle**:
+  `SoftEdgesToggle` (graph-only, folded into the bottom-right controls cluster
+  above the view switcher); state in ephemeral `showSoftEdgesProvider`
+  (NotifierProvider<bool>, default false, no drift migration). **When off the
+  layer does no work** — the edges provider isn't even watched/read. Fully
+  offline (DB-only). **Tests** (+18: provider filtering incl. out-of-conv /
+  dangling / crossSession exclusion; painter culling + missing-endpoint skip +
+  `shouldRepaint`; widget tests for default-off, toggle on/off carrying the 2
+  renderable edges, RepaintBoundary structure, graph-only toggle). `flutter
+  analyze` clean; `flutter test` 266 green. **Real-backend visual verification
+  deferred** — per project convention flutter_test/goldens don't match real
+  macOS Impeller; a widget test is the gate, a release-build screenshot pass is
+  deferred.
+
 - 2026-06-25 · M8.2 · retrieval-assembled context replaces full-ancestry in
   `BranchService` (DESIGN.md §10) — the central Phase-2 behavioral change.
   **Query rewrite (step 1)**: `QueryRewriter` (`data/llm/query_rewriter.dart`),

@@ -115,6 +115,20 @@ class ThemeModeNotifier extends Notifier<ThemeMode> {
   }
 }
 
+/// Whether the canvas draws the soft-edge layer (DESIGN.md §10 "Soft edges").
+/// **Default off** — associative links can clutter the map, so they're opt-in.
+/// Ephemeral session state (not persisted): a fresh launch starts hidden. When
+/// off, the soft-edge provider/painter do no work (the layer isn't built).
+final showSoftEdgesProvider =
+    NotifierProvider<ShowSoftEdges, bool>(ShowSoftEdges.new);
+
+class ShowSoftEdges extends Notifier<bool> {
+  @override
+  bool build() => false;
+
+  void toggle() => state = !state;
+}
+
 /// Conversation selected in the sidebar; null = nothing selected.
 final selectedConversationIdProvider =
     NotifierProvider<SelectedConversationId, String?>(
@@ -164,4 +178,37 @@ final conversationGraphProvider =
       computeGridLayout(turns, conversation.currentTurnId),
     );
   });
+});
+
+/// The **renderable** soft edges of an open conversation (DESIGN.md §10 "Soft
+/// edges"): the precomputed `soft_edges` whose **both** endpoints are turns in
+/// this conversation, so the canvas layer can map each to its two `GridCell`s.
+///
+/// `crossSession` edges (and any whose endpoints aren't both on this grid) are
+/// dropped — cross-canvas rendering is a later step (M9.3). This is a one-shot
+/// read (soft edges only change when the conversation is (re)indexed, which the
+/// canvas isn't watching live), scoped per `conversationId`, so it resets when
+/// the conversation changes. Returns `[]` for an unindexed conversation.
+final softEdgesForConversationProvider = FutureProvider.autoDispose
+    .family<List<SoftEdge>, String>((ref, conversationId) async {
+  final db = ref.watch(databaseProvider);
+  final turnIds = await (db.selectOnly(db.turns)
+        ..addColumns([db.turns.id])
+        ..where(db.turns.conversationId.equals(conversationId)))
+      .map((row) => row.read(db.turns.id)!)
+      .get();
+  if (turnIds.isEmpty) return const [];
+  final turnIdSet = turnIds.toSet();
+  // Pull every non-crossSession edge touching one of this conversation's turns,
+  // then keep only those whose *other* endpoint is also in-conversation. Both
+  // endpoints must be on this grid for the painter to place the edge.
+  final rows = await (db.select(db.softEdges)
+        ..where((e) =>
+            e.kind.isNotValue('crossSession') &
+            (e.fromTurnId.isIn(turnIds) | e.toTurnId.isIn(turnIds))))
+      .get();
+  return [
+    for (final e in rows)
+      if (turnIdSet.contains(e.fromTurnId) && turnIdSet.contains(e.toTurnId)) e,
+  ];
 });
