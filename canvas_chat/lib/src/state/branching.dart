@@ -7,7 +7,9 @@ import '../data/llm/llm_provider.dart';
 import '../data/llm/openai_compatible_embedding_provider.dart';
 import '../data/llm/openai_compatible_provider.dart';
 import '../data/llm/proposition_extractor.dart';
+import '../data/llm/query_rewriter.dart';
 import 'providers.dart';
+import 'retrieval.dart';
 
 /// Connection settings for the live provider, persisted in shared-prefs and
 /// edited from the model-settings dialog. First-run defaults are seeded from
@@ -151,6 +153,30 @@ final embeddingProviderProvider = Provider<EmbeddingProvider>((ref) {
   return provider;
 });
 
+/// The query rewriter used by retrieval (DESIGN.md §10 step 1). Mirrors
+/// [propositionExtractorProvider]: once a usable LLM key is present it resolves
+/// to the model-backed [LlmQueryRewriter], and otherwise to the fully-offline
+/// [StubQueryRewriter] — so context assembly stays deterministic offline.
+final queryRewriterProvider = Provider<QueryRewriter>((ref) {
+  final config = ref.watch(llmConfigProvider);
+  if (!config.isConfigured) return const StubQueryRewriter();
+  return LlmQueryRewriter(ref.watch(llmProviderProvider));
+});
+
+/// Builds a [ContextAssembler] from the app's providers (DESIGN.md §10). The
+/// embedder / rewriter resolve to the offline stubs until a backend is
+/// configured, so context assembly is fully offline and deterministic by
+/// default. Reading this needs `sharedPreferencesProvider` (via the configs),
+/// so any caller on a no-prefs path must guard — but [BranchService] only
+/// resolves it when a branch is actually created.
+final contextAssemblerProvider = Provider<ContextAssembler>((ref) {
+  return ContextAssembler(
+    db: ref.watch(databaseProvider),
+    embedder: ref.watch(embeddingProviderProvider),
+    rewriter: ref.watch(queryRewriterProvider),
+  );
+});
+
 /// The proposition + entity extractor used by the index (DESIGN.md §10). Reuses
 /// [llmProviderProvider]: once a usable LLM key is present it resolves to the
 /// model-backed [LlmPropositionExtractor], and otherwise to the fully-offline
@@ -188,6 +214,7 @@ final branchServiceProvider = Provider<BranchService>(
   (ref) => BranchService(
     ref.watch(databaseProvider),
     ref.watch(llmProviderProvider),
+    assembler: ref.watch(contextAssemblerProvider),
     onGenerating: (turnId, generating) {
       final turns = ref.read(generatingTurnsProvider.notifier);
       generating ? turns.add(turnId) : turns.remove(turnId);
@@ -202,10 +229,16 @@ final branchServiceProvider = Provider<BranchService>(
 /// lays it out in a fresh lane to the right — a horizontal branch — whenever
 /// the source already has a continuation below it.
 class BranchService {
-  BranchService(this._db, this._llm, {this.onGenerating});
+  BranchService(this._db, this._llm, {this.assembler, this.onGenerating});
 
   final AppDatabase _db;
   final LlmProvider _llm;
+
+  /// Builds the retrieval-assembled context that replaces the full root→parent
+  /// ancestry (DESIGN.md §10). Optional: when null (e.g. a focused unit test
+  /// that constructs the service directly), the service falls back to sending
+  /// the full ancestry — the v1 behavior — so it never needs the index.
+  final ContextAssembler? assembler;
 
   /// Notified when a turn's streaming starts (`true`) and ends (`false`), so
   /// app state can track which turns are mid-generation. Optional — tests that
@@ -252,9 +285,28 @@ class BranchService {
   Future<void> _stream(String id, Turn parent, String prompt) async {
     onGenerating?.call(id, true);
     try {
-      final context = await _ancestors(parent);
+      // DESIGN.md §10: continuing a session RETRIEVES context instead of
+      // sending the full root→parent ancestry. With an assembler wired, the
+      // context is the last 1–2 turns verbatim + MMR-selected retrieved items
+      // (tagged {branch, committed?} in the preamble); without one, fall back
+      // to the v1 full-ancestry send.
+      List<Turn> context;
+      String? preamble;
+      final assembler = this.assembler;
+      if (assembler != null) {
+        final assembled = await _assembleContext(assembler, parent, prompt);
+        context = assembled.verbatim;
+        preamble = assembled.preamble.isEmpty ? null : assembled.preamble;
+      } else {
+        context = await _ancestors(parent);
+      }
+
       final buffer = StringBuffer();
-      await for (final delta in _llm.generate(prompt: prompt, context: context)) {
+      await for (final delta in _llm.generate(
+        prompt: prompt,
+        context: context,
+        preamble: preamble,
+      )) {
         buffer.write(delta);
         await _writeResponse(id, buffer.toString());
       }
@@ -263,6 +315,23 @@ class BranchService {
     } finally {
       onGenerating?.call(id, false);
     }
+  }
+
+  /// Loads [parent]'s conversation row and runs the assembler. Kept separate so
+  /// `_stream` stays readable; the assembler default scope is `project`.
+  Future<AssembledContext> _assembleContext(
+    ContextAssembler assembler,
+    Turn parent,
+    String prompt,
+  ) async {
+    final conversation = await (_db.select(_db.conversations)
+          ..where((c) => c.id.equals(parent.conversationId)))
+        .getSingle();
+    return assembler.assemble(
+      conversation: conversation,
+      parent: parent,
+      prompt: prompt,
+    );
   }
 
   Future<void> _writeResponse(String id, String md) =>

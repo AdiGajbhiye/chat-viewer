@@ -1,13 +1,16 @@
 import 'dart:async';
 
 import 'package:canvas_chat/src/data/db/database.dart';
+import 'package:canvas_chat/src/data/llm/embedding_math.dart';
+import 'package:canvas_chat/src/data/llm/embedding_provider.dart';
 import 'package:canvas_chat/src/data/llm/llm_provider.dart';
 import 'package:canvas_chat/src/state/branching.dart';
 import 'package:canvas_chat/src/state/providers.dart';
-import 'package:drift/drift.dart';
+import 'package:drift/drift.dart' hide isNull, isNotNull;
 import 'package:drift/native.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 /// A deterministic provider that echoes a marker + the prompt, so a test can
 /// assert the branch's response came from the seam (and saw the prompt).
@@ -16,6 +19,7 @@ class _EchoProvider implements LlmProvider {
   Stream<String> generate({
     required String prompt,
     required List<Turn> context,
+    String? preamble,
   }) async* {
     yield 'ECHO(${context.length}): ';
     yield prompt;
@@ -33,6 +37,7 @@ class _GatedProvider implements LlmProvider {
   Stream<String> generate({
     required String prompt,
     required List<Turn> context,
+    String? preamble,
   }) async* {
     await gate.future;
     yield 'done';
@@ -51,6 +56,7 @@ class _ChunkedProvider implements LlmProvider {
   Stream<String> generate({
     required String prompt,
     required List<Turn> context,
+    String? preamble,
   }) async* {
     for (final delta in deltas) {
       yield delta;
@@ -66,9 +72,29 @@ class _ThrowingProvider implements LlmProvider {
   Stream<String> generate({
     required String prompt,
     required List<Turn> context,
+    String? preamble,
   }) async* {
     yield 'half';
     throw Exception('boom');
+  }
+}
+
+/// Captures the `context` + `preamble` the seam passed, so a test can assert
+/// the swap to retrieval-assembled context (DESIGN.md §10) — not the full
+/// ancestry.
+class _CapturingProvider implements LlmProvider {
+  List<Turn>? capturedContext;
+  String? capturedPreamble;
+
+  @override
+  Stream<String> generate({
+    required String prompt,
+    required List<Turn> context,
+    String? preamble,
+  }) async* {
+    capturedContext = context;
+    capturedPreamble = preamble;
+    yield 'ok';
   }
 }
 
@@ -92,6 +118,7 @@ Future<Turn> _insertTurn(
 
 void main() {
   late AppDatabase db;
+  late SharedPreferences prefs;
 
   setUp(() async {
     db = AppDatabase(NativeDatabase.memory());
@@ -100,6 +127,13 @@ void main() {
     await db
         .into(db.conversations)
         .insert(ConversationsCompanion.insert(id: 'c', source: 'test'));
+    // The provider-backed BranchService now resolves contextAssemblerProvider
+    // (DESIGN.md §10 retrieval), which reads the LLM/embedding config from
+    // SharedPreferences — so the container tests must override it. With no
+    // stored key the configs stay unconfigured → offline stub rewriter /
+    // embedder, keeping these tests deterministic and offline.
+    SharedPreferences.setMockInitialValues({});
+    prefs = await SharedPreferences.getInstance();
   });
   tearDown(() => db.close());
 
@@ -164,6 +198,7 @@ void main() {
     final container = ProviderContainer(overrides: [
       databaseProvider.overrideWithValue(db),
       llmProviderProvider.overrideWithValue(_GatedProvider(gate)),
+      sharedPreferencesProvider.overrideWithValue(prefs),
     ]);
     addTearDown(container.dispose);
     final parent = await _insertTurn(db, id: 'c:p');
@@ -201,6 +236,7 @@ void main() {
     final container = ProviderContainer(overrides: [
       databaseProvider.overrideWithValue(db),
       llmProviderProvider.overrideWithValue(_ThrowingProvider()),
+      sharedPreferencesProvider.overrideWithValue(prefs),
     ]);
     addTearDown(container.dispose);
     final parent = await _insertTurn(db, id: 'c:p');
@@ -220,5 +256,56 @@ void main() {
     // `finally` must clear the marker even on error, or the reader shows
     // "Generating…" forever.
     expect(container.read(generatingTurnsProvider), isNot(contains(branch.id)));
+  });
+
+  test(
+      'sends retrieval-assembled context (not the full ancestry), offline & '
+      'deterministic', () async {
+    // A 3-deep linear chain. Under the OLD behavior all 3 ancestors would be
+    // sent as context; under retrieval only the last 1–2 turns are kept
+    // verbatim and the rest earns its place via retrieval (DESIGN.md §10).
+    await _insertTurn(db, id: 'c:root', parent: null);
+    await _insertTurn(db, id: 'c:mid', parent: 'c:root');
+    final parent = await _insertTurn(db, id: 'c:leaf', parent: 'c:mid');
+
+    // Index `c:root` with a proposition embedded (offline stub embedder) on the
+    // exact text we'll prompt with, so retrieval surfaces it deterministically
+    // even though it's outside the verbatim tail.
+    const embedder = StubEmbeddingProvider();
+    const probe = 'quantum entanglement nonlocal correlation';
+    final vector = (await embedder.embed([probe])).single;
+    await db.into(db.propositions).insert(
+          PropositionsCompanion.insert(
+            id: 'c:root#0',
+            turnId: 'c:root',
+            conversationId: 'c',
+            projectId: 'default',
+            propText: probe,
+            embedding: Value(encodeEmbedding(vector)),
+            embeddingModel: Value(embedder.modelId),
+          ),
+        );
+
+    final captor = _CapturingProvider();
+    final container = ProviderContainer(overrides: [
+      databaseProvider.overrideWithValue(db),
+      llmProviderProvider.overrideWithValue(captor),
+      sharedPreferencesProvider.overrideWithValue(prefs),
+    ]);
+    addTearDown(container.dispose);
+
+    final branch = await container
+        .read(branchServiceProvider)
+        .branchFrom(parent: parent, prompt: probe);
+    await branch.done;
+
+    final ctxIds = captor.capturedContext!.map((t) => t.id).toList();
+    // The verbatim context is the last 1–2 turns (mid, leaf) — NOT the full
+    // root→mid→leaf ancestry the v1 behavior sent.
+    expect(ctxIds, ['c:mid', 'c:leaf']);
+    expect(ctxIds, isNot(contains('c:root')));
+    // `c:root` earns its place by retrieval: it rides in the tagged preamble.
+    expect(captor.capturedPreamble, isNotNull);
+    expect(captor.capturedPreamble, contains('branch:c'));
   });
 }

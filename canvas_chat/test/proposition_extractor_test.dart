@@ -20,6 +20,7 @@ class _FixedProvider implements LlmProvider {
   Stream<String> generate({
     required String prompt,
     required List<Turn> context,
+    String? preamble,
   }) async* {
     for (final chunk in chunks) {
       yield chunk;

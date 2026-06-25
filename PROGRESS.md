@@ -15,6 +15,54 @@ shortcuts, Android input, import warnings).
 
 ## Log
 
+- 2026-06-25 · M8.2 · retrieval-assembled context replaces full-ancestry in
+  `BranchService` (DESIGN.md §10) — the central Phase-2 behavioral change.
+  **Query rewrite (step 1)**: `QueryRewriter` (`data/llm/query_rewriter.dart`),
+  stub/LLM pattern. `StubQueryRewriter` = deterministic — augments the prompt
+  with salient terms from the last turn (coref carry-over) and emits
+  augmented+bare as multi-query; `LlmQueryRewriter` asks for a small JSON array,
+  robust-parsed like `LlmPropositionExtractor`, **falls back to the bare prompt**
+  (never throws). **Hybrid retrieval (step 2)** in `ContextAssembler`
+  (`state/retrieval.dart`): dense (brute-force cosine of the query vectors vs
+  `propositions.embedding`, best per turn) + sparse (`searchTurnIds` FTS,
+  rank-derived similarity `0.9/(1+rank·0.5)`) + facts (cosine vs active
+  `facts.embedding`, `+0.1` boost, surfaced via `fact_sources` as committed
+  candidates carrying the fact text); union dedup by turn, capped at a
+  `candidatePoolSize=40`. **Scope** param `{branch|session|project|all}`, default
+  **project** (index is project-scoped; full toggle UI is M9.3). **Fork-aware
+  scoring (step 3)**: pure `scoreCandidate(ScoringSignals, RetrievalWeights)` =
+  `α·sim + β·recency + γ·branchProx + ε·committed − δ·divergedSibling`
+  (α1.0/β0.3/γ0.3/ε0.25/δ0.4). recency = linear decay vs the current turn;
+  branchProximity from `parent_turn_id` + `current_turn_id` (1 on active lineage
+  / parent ancestry, `1/(1+hops)` decay, 0 cross-conversation) — no new storage;
+  diverged-sibling = off both active lineage and parent ancestry within the
+  conversation (soft penalty, never excluded). In the no-fork linear case
+  branchProximity ≈ recency (noted in code). **MMR (step 4)**: pure `mmrSelect`,
+  λ default **0.7**, redundancy = cosine of the candidates' proposition vectors;
+  λ=1 pure relevance, λ=0 pure diversity. **Assembly (step 5)**: persona +
+  **last 1–2 turns verbatim** (also the rewriter's input) + MMR-selected items
+  (propositions expanded to their turn; a turn already in the tail is never
+  re-surfaced) + the new prompt; each item tagged `{branch=conversationId,
+  committed?}` in a synthesized **preamble**. **Tags reach the model without
+  breaking the interface**: `LlmProvider.generate` gained an OPTIONAL
+  `String? preamble` (default null) — `OpenAiCompatibleProvider` sends it as a
+  second `system` message after the persona, `StubLlmProvider` ignores it; every
+  existing call site is unaffected. **Swap**: `BranchService._stream` now runs
+  the assembler (wired via `contextAssemblerProvider`/`queryRewriterProvider`)
+  and sends `context: verbatim, preamble: tags` instead of `_ancestors(parent)`;
+  the assembler is an OPTIONAL ctor dep, so a directly-constructed service still
+  falls back to the v1 full-ancestry send. Offline-safe & deterministic under
+  the stub embedder + FTS. Test reconciliation: the two provider-container
+  branch tests now also override `sharedPreferencesProvider` (the assembler
+  reads the LLM/embedding config) — they assert generating-state/failure, not
+  ancestry, so unchanged in intent; `passes the root→parent context path`
+  constructs the service WITHOUT an assembler and still asserts the fallback
+  ancestry, so it stays as-is. Interface-required signature updates to test
+  `LlmProvider` fakes (added `preamble`). analyze clean + 24 new tests (251
+  total): rewriter determinism/JSON-parse, scoring per-term + weight tuning, MMR
+  diversify/λ-extremes, retrieval union-dedup + scope filter, assembly
+  verbatim/tags/no-dup/facts, and a stub-provider BranchService integration
+  asserting verbatim tail (not full ancestry) + tagged preamble.
 - 2026-06-25 · M8.1 · soft-edge precompute (DESIGN.md §10) — semantic k-NN over
   proposition embeddings + entity-overlap edges. `SoftEdgeComputer`
   (`state/soft_edges.dart`).`recomputeForConversation(id, {semanticK=5,

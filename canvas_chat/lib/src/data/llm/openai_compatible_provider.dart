@@ -91,6 +91,7 @@ class OpenAiCompatibleProvider implements LlmProvider {
   Stream<String> generate({
     required String prompt,
     required List<Turn> context,
+    String? preamble,
   }) async* {
     final request =
         http.Request('POST', Uri.parse('${config.baseUrl}/chat/completions'))
@@ -99,7 +100,7 @@ class OpenAiCompatibleProvider implements LlmProvider {
           ..body = jsonEncode({
             'model': config.model,
             'stream': true,
-            'messages': _messages(prompt, context),
+            'messages': _messages(prompt, context, preamble),
           });
     if (config.apiKey.trim().isNotEmpty) {
       request.headers['authorization'] = 'Bearer ${config.apiKey}';
@@ -140,11 +141,22 @@ class OpenAiCompatibleProvider implements LlmProvider {
     }
   }
 
-  List<Map<String, String>> _messages(String prompt, List<Turn> context) {
+  List<Map<String, String>> _messages(
+    String prompt,
+    List<Turn> context,
+    String? preamble,
+  ) {
     final messages = <Map<String, String>>[];
     final system = config.systemPrompt?.trim();
     if (system != null && system.isNotEmpty) {
       messages.add({'role': 'system', 'content': system});
+    }
+    // The retrieval preamble (tagged propositions + the {branch, committed?}
+    // reading note, DESIGN.md §10) rides as its own system message after the
+    // persona so it stays out-of-band from the verbatim turn history.
+    final extra = preamble?.trim();
+    if (extra != null && extra.isNotEmpty) {
+      messages.add({'role': 'system', 'content': extra});
     }
     for (final turn in context) {
       if (turn.promptMd.trim().isNotEmpty) {
