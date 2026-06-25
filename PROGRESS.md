@@ -1,7 +1,8 @@
 # Implementation Progress
 
 Changelog for [Canvas Chat](DESIGN.md). Milestones **M1–M5 are complete**; work
-since is post-M5 features, fixes and reviews. Newest first.
+since is post-M5 features, fixes and reviews, plus **Phase 2** design (DESIGN.md
+§10), not yet built. Newest first.
 
 Conventions: keep `flutter analyze` clean and `flutter test` green; record
 non-obvious decisions and test gotchas in the log (git holds the detail).
@@ -14,6 +15,20 @@ shortcuts, Android input, import warnings).
 
 ## Log
 
+- 2026-06-25 · design · Phase 2 architecture (DESIGN.md §10) — design only,
+  nothing built. Continuing a long, forked session retrieves context instead of
+  walking the full ancestry: per-turn proposition index (≈5 atomic, coref-resolved
+  embedded propositions + entities), hybrid retrieval (dense + existing `turns_fts`
+  + boosted facts) with fork-aware scoring derived from `parent_turn_id`/
+  `current_turn_id` (no new storage), soft edges, and a Layer-2 facts/decisions
+  table (commit + supersede + provenance) that the future wiki is a view over.
+  Index is project-scoped in shape but **lazily** populated on session open,
+  active-path-first. Schema lands as drift migration v3 (Project tier, plus
+  `propositions`/`entities`/`turn_entities`/`soft_edges`/`facts`/`fact_sources`);
+  reuses the `LlmProvider` pattern for an `EmbeddingProvider`; swaps the
+  full-ancestry send in `BranchService` for retrieval. Build order M6–M9. Open
+  questions (extraction cost, contradiction UI, wiki read-only vs. editable,
+  soft-edge recompute trigger, local vs. API embeddings) in DESIGN.md §12.
 - 2026-06-21 · perf fix · read-mode lazy transcript. The reader rendered the
   whole turn eagerly (a `SingleChildScrollView` + Column of every response
   chunk), so paging to a long turn laid it all out at once — the arrow-key hitch

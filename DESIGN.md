@@ -3,12 +3,15 @@
 A Flutter app that visualizes ChatGPT conversation history as a node graph on a
 pannable/zoomable canvas, instead of a linear chat transcript.
 
-**Status:** Draft v2 · 2026-06-10
+**Status:** Draft v3 · 2026-06-25
 **Platforms:** Android, macOS (Flutter desktop)
 **Project location:** `canvas_chat/` in this folder (export data in `chatgpt_data/` stays as test fixture)
 **Scope for v1:** Viewer-only. Import the official ChatGPT data export and explore
 it on canvas. No live LLM chat yet (the architecture must not preclude it — see
 [Future work](#9-future-work)).
+**Phase 2 (designed, not yet built):** evolve the viewer into a research /
+exploration workspace — retrieval-assembled context for continuing long, forked
+sessions, a curated facts/decisions layer, and a generated project wiki. See §10.
 
 ---
 
@@ -428,19 +431,157 @@ No canvas/graph package — custom, per §6.
 
 ## 9. Future work (designed-for, not built)
 
-- **Live chat:** `LlmProvider` interface (`sendTurn(List<Turn> path) → Stream<Delta>`);
-  forking = start a new child turn from any node and send its root-path as
-  context. OpenAI-API-key provider first. The turn tree already models this; only
-  a `pending` turn state and a composer UI are missing.
+- **Live chat / retrieval-assembled context:** `LlmProvider` interface
+  (`sendTurn(List<Turn> path) → Stream<Delta>`); forking = start a new child turn
+  from any node. Sending the full root-path as context is the v1 stub — Phase 2
+  replaces it with retrieval (§10). OpenAI-API-key provider first.
 - **Multi-provider** (Anthropic, Ollama) behind the same interface; `source`
   column already namespaces imported vs. authored content.
-- **Cross-conversation canvases:** user-curated boards referencing turns from
-  multiple conversations (`canvas` table + membership table).
+- **Cross-conversation / cross-session:** retrieval and the project wiki span
+  sessions within a Project (§10); a Project tier above Conversation replaces the
+  earlier "curated boards" sketch.
 - **Sync:** the DB is the unit of sync; file-based sync (synced folder) before
   any backend.
 - **Other importers:** Claude export adapter behind the same importer interface.
 
-## 10. Milestones
+## 10. Phase 2 — Retrieval & the design-doc layer
+
+Phase 2 turns the viewer into a **research / exploration workspace**: you keep
+working a long, heavily-forked session and the app distills it into a condensed,
+high-signal design doc. The existing turn graph, importer and storage stay as-is;
+everything below is designed but not yet built.
+
+The driving constraint: continuing a long session can't fit the whole history in
+the context window — and for a drifting, multi-topic research conversation the
+full root→parent path isn't even the *right* context. The graph edges encode turn
+*order*, not *topic*; topic is latent. So context is **retrieved**, not walked.
+Frequent forks are assumed the norm (the real export already has them).
+
+### Two layers
+
+- **Layer 1 — raw conversation graph** (built): every turn, messy, branching,
+  exploratory. The source of truth for *what was said*.
+- **Layer 2 — committed facts / decisions** (new): canonical statements a user
+  *commits* from a turn, each with provenance back to its source turn(s) and a
+  `supersedes` link. The source of truth for *what was decided*.
+
+Layer 2 is the keystone — three planned features collapse into it: the **commit**
+action writes it; retrieval **boosts** it (authoritative, and supersession fixes
+"latest decision vs. most-similar match"); the **wiki** is a view over it.
+
+### Context assembly (replaces the full-ancestry send in `BranchService`)
+
+`BranchService` today sends the full root→parent path to `LlmProvider.generate`.
+Phase 2 swaps that one call site for a retrieval-assembled context:
+
+1. **Rewrite** the new prompt into a standalone query using the last 1–2 turns
+   (coref resolution — "make that faster" → "optimize the k-NN query"). This is
+   load-bearing: drift makes follow-ups content-free, so raw-prompt retrieval
+   fails exactly when it's needed. The "few query prompts" idea lives here as
+   multi-query expansion.
+2. **Retrieve** hybrid: dense (proposition embeddings) + sparse (the existing
+   `turns_fts` FTS5 — free) + facts (boosted). Scope filter = branch | session |
+   project | all.
+3. **Score** = α·similarity + β·recency + γ·branch-proximity + ε·committed-boost
+   − δ·diverged-sibling. Branch terms derive from `parent_turn_id` +
+   `current_turn_id` (same inputs as the grid) — no new storage. In the no-fork
+   linear case branch-proximity ≈ recency; it only adds signal once forks exist.
+4. **Assemble**: persona + last 1–2 turns verbatim + retrieved items (MMR-deduped,
+   propositions expanded to their turns) + the new prompt. Each retrieved item is
+   **tagged {branch, committed?}** so the model separates tentative cross-branch
+   claims from settled ones — exploration produces contradictions ("Postgres" in
+   one branch, "SQLite" in another) and flat context would silently merge them.
+
+There is **no hard ancestor inclusion** — only the last 1–2 turns are kept
+verbatim (for flow and as the rewriter's input); everything else earns its place
+by retrieval.
+
+### Proposition index (per turn, multi-representation)
+
+Indexing a turn yields ~5 **atomic, standalone, coref-resolved propositions**
+(each meaningful out of context), not one summary. The win is granularity: a turn
+touching three topics produces three separately-retrievable vectors, so a query
+about topic #2 matches even when #1/#3 dominate — which is exactly what serves the
+"explores several topics at once" case. Each proposition carries an **open-vocab
+aspect tag** (not fixed buckets like eng/biz/mktg — those don't generalize),
+entities and keywords. Generate with a little parent context so isolated nodes
+("yes, do that") don't summarize to noise. Retrieve on propositions, expand to the
+full turn ("small-to-big").
+
+### Soft edges
+
+Precomputed at index time, persisted, rendered as a canvas layer:
+
+- **semantic** — k-NN over proposition embeddings (top-k + threshold, not O(n²)).
+- **entity** — turns sharing entities (interpretable; also the wiki's backbone).
+- **crossSession** — the same machinery across the session boundary.
+
+Symmetric; stored once canonicalized `from < to`. Query-time relevance is the same
+mechanism with the live query as the probe.
+
+### Project scope + lazy indexing
+
+The index is **project-scoped in shape** (a new Project tier above Conversation;
+everything carries `project_id`, so retrieval can range across the project) but
+**lazily populated** — indexing the whole export up front is too costly. On
+**session open**, enqueue indexing for that conversation if not already indexed;
+the job walks its turns **active-path-first** (retrieval works before the whole
+session finishes), batching extraction + embedding calls.
+`conversations.index_state` drives the machine (notIndexed → indexing → indexed →
+stale); re-embed only when the embedding model changes.
+
+Consequences to design around:
+- **Cross-session retrieval only sees already-opened sessions** until an idle-time
+  background backfill exists. Don't market project search as "your whole project"
+  before then.
+- **First open of a long session has a cost / latency spike** (one extraction call
+  per turn, batched). Active-path-first + an on-canvas indexing indicator hides
+  most of it.
+
+### Schema additions (drift migration v3)
+
+New tables + columns; reuses FTS5 (sparse retrieval) and clones the `LlmProvider`
+pattern for an `EmbeddingProvider`.
+
+```sql
+projects(id PK, name, created_at)
+-- conversations: + project_id (FK, default 'default'),
+--                + index_state INT, + indexed_at INT
+
+propositions(
+  id PK, turn_id FK, conversation_id, project_id,   -- ids denormalized for scope filter
+  text, aspect TEXT NULL,                           -- open-vocab tag
+  embedding BLOB, embedding_model TEXT)             -- float32[]; model id for re-embed invalidation
+
+entities(id PK, project_id, name, normalized)
+turn_entities(entity_id FK, turn_id FK)             -- m:n → entity edges + wiki backlinks
+
+soft_edges(from_turn_id, to_turn_id, kind TEXT,     -- 'semantic'|'entity'|'crossSession'
+           weight REAL, project_id)                 -- symmetric, from < to
+
+facts(                                              -- Layer 2
+  id PK, project_id, conversation_id NULL,          -- NULL conv = project-wide; set = pinned to a session
+  text, status TEXT,                                -- 'active'|'superseded'
+  supersedes_id NULL, embedding BLOB, created_at)
+fact_sources(fact_id FK, turn_id FK)                -- provenance → wiki drill-down
+```
+
+Vectors: store as BLOB, brute-force cosine in Dart for v1 — lazy indexing keeps
+the working set (opened sessions) small enough. Move to `sqlite-vec` only when a
+project outgrows memory.
+
+### Deferred UI over this schema (no further migrations)
+
+- **Commit action** — promote a proposition / selected span into `facts` +
+  `fact_sources`.
+- **Project wiki** (Notion / Obsidian-style) — entities as hyperlinked pages,
+  facts as content, `fact_sources` for click-through to the source turn;
+  connective prose via GraphRAG-style *topical* clustering (topics cross branches
+  — don't cluster by fork structure). Generated read-only first; any edits flow
+  back as commits.
+- **Cross-session scope toggle** + the idle-time index backfill.
+
+## 11. Milestones
 
 1. **M1 Import:** parser + turn pairing + drift schema; CLI-ish debug screen
    showing imported counts. Golden tests against the real export (1,594 convs,
@@ -455,7 +596,19 @@ No canvas/graph package — custom, per §6.
 5. **M5 Polish:** FTS search, images/PDF assets, macOS shortcuts + menus,
    Android back/deep-link to conversation, import warnings UI.
 
-## 11. Open questions
+### Phase 2
+
+6. **M6 Index foundation:** drift migration v3 (Project tier + new tables);
+   `EmbeddingProvider` interface beside `LlmProvider`; proposition + entity
+   extraction. No behavior change — schema + services only.
+7. **M7 Lazy indexer:** index-on-open, active-path-first, on-canvas progress, the
+   `index_state` machine.
+8. **M8 Retrieval:** query rewrite → hybrid + fork-aware retrieval → context
+   assembly, swapped into `BranchService`; soft-edge precompute + canvas layer.
+9. **M9 Facts & wiki:** commit action over `facts`/`fact_sources`; generated
+   project wiki; cross-session scope + backfill.
+
+## 12. Open questions
 
 - Branch density: does this account's history actually contain many forks?
   (Worth measuring during M1 — it determines how often lanes ≥ 1 appear and
@@ -464,3 +617,14 @@ No canvas/graph package — custom, per §6.
   a very tall lane — is plain scrolling enough, or do we need a jump-to-row
   scrubber? Decide after M3 dogfooding.
 - `thoughts` content: render verbatim (can be long) or only `reasoning_recap`?
+
+### Phase 2
+
+- Proposition extraction is an LLM call per turn — cost/quality vs. batching, and
+  whether a smaller/local model suffices for extraction + embedding.
+- Surfacing cross-branch contradictions in the UI (the tag is in context; what
+  does the *user* see?).
+- Wiki: generated-read-only vs. editable-flows-back-as-commits — decide before M9.
+- When to (re)compute soft edges: on each new turn, on session close, or on commit?
+- Embedding backend: bundle a local model vs. require an API key — the latter
+  breaks the fully-offline promise, so make it opt-in per project.
