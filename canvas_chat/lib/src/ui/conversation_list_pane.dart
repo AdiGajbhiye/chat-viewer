@@ -7,6 +7,7 @@ import '../state/import_controller.dart';
 import '../state/providers.dart';
 import 'import_warnings_dialog.dart';
 import 'llm_settings_dialog.dart';
+import 'wiki/wiki_view.dart';
 
 /// Sidebar: import button, FTS search field (M5), and the conversation list
 /// (newest first, or search results when a query is active) — DESIGN.md §6
@@ -60,6 +61,7 @@ class ConversationListPane extends ConsumerWidget {
                   style: Theme.of(context).textTheme.titleMedium,
                 ),
               ),
+              const _WikiButton(),
               const _SettingsButton(),
               const _ThemeToggleButton(),
               const ImportMenuButton(),
@@ -180,6 +182,38 @@ class _ConversationList extends ConsumerWidget {
     if (millis == null) return '';
     return MaterialLocalizations.of(context)
         .formatShortDate(DateTime.fromMillisecondsSinceEpoch(millis));
+  }
+}
+
+/// Opens the generated project wiki (DESIGN.md §10) for the selected
+/// conversation's project (defaulting to 'default' when nothing is selected).
+/// Read-only — entities/topics/facts generated from the existing tables.
+class _WikiButton extends ConsumerWidget {
+  const _WikiButton();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return IconButton(
+      tooltip: 'Project wiki',
+      icon: const Icon(Icons.menu_book_outlined),
+      onPressed: () async {
+        final projectId = await _selectedProjectId(ref);
+        if (!context.mounted) return;
+        await WikiScreen.open(context, projectId);
+      },
+    );
+  }
+
+  /// The project of the selected conversation, or 'default' when none is
+  /// selected / it can't be resolved.
+  Future<String> _selectedProjectId(WidgetRef ref) async {
+    final selected = ref.read(selectedConversationIdProvider);
+    if (selected == null) return 'default';
+    final db = ref.read(databaseProvider);
+    final conversation = await (db.select(db.conversations)
+          ..where((c) => c.id.equals(selected)))
+        .getSingleOrNull();
+    return conversation?.projectId ?? 'default';
   }
 }
 

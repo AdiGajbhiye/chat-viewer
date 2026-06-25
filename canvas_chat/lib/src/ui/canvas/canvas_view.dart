@@ -12,6 +12,7 @@ import '../../data/db/database.dart';
 import '../../domain/grid_layout.dart';
 import '../../state/indexing.dart';
 import '../../state/providers.dart';
+import '../../state/wiki.dart';
 import '../read_view.dart';
 import 'canvas_metrics.dart';
 import 'canvas_viewport.dart';
@@ -149,6 +150,9 @@ class _CanvasViewState extends ConsumerState<CanvasView>
     if (layout.isEmpty) {
       return const Center(child: Text('This conversation has no turns.'));
     }
+    // Watched so a wiki click-through (which sets the request then selects this
+    // conversation) re-triggers a build even when the canvas is already open.
+    ref.watch(wikiNavRequestProvider);
     // Wait for the persisted canvas state before the first layout pass so
     // selection/viewport/mode can be restored (one-shot read; load failures
     // just mean defaults).
@@ -159,6 +163,7 @@ class _CanvasViewState extends ConsumerState<CanvasView>
     final saved = savedAsync.value;
     _reconcileSelection(graph, saved);
     _reconcileSearch(layout);
+    _consumeWikiNavRequest(layout);
 
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -607,6 +612,31 @@ class _CanvasViewState extends ConsumerState<CanvasView>
         : layout.activePathIds.isNotEmpty
         ? layout.activePathIds.last
         : layout.cells.first.turn.id;
+  }
+
+  /// Honors a pending wiki click-through (DESIGN.md §10 "click-through to the
+  /// source turn"): if there's a [WikiNavRequest] for *this* conversation whose
+  /// turn exists on the grid, open the reader on it and clear the request.
+  /// Deferred to a post-frame callback so it runs after first-build
+  /// initialization (and never mutates provider state during build).
+  void _consumeWikiNavRequest(TurnGridLayout layout) {
+    final request = ref.read(wikiNavRequestProvider);
+    if (request == null || request.conversationId != widget.conversationId) {
+      return;
+    }
+    if (!layout.byId.containsKey(request.turnId)) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      // Re-check: another consumer (or a stale frame) may have cleared it.
+      final pending = ref.read(wikiNavRequestProvider);
+      if (pending == null ||
+          pending.conversationId != widget.conversationId ||
+          pending.turnId != request.turnId) {
+        return;
+      }
+      ref.read(wikiNavRequestProvider.notifier).clear();
+      _enterRead(request.turnId);
+    });
   }
 
   /// First-layout initialization: the viewport from the persisted state

@@ -8,6 +8,7 @@ import '../state/providers.dart';
 import 'canvas/canvas_view.dart';
 import 'conversation_list_pane.dart';
 import 'import_warnings_dialog.dart';
+import 'wiki/wiki_view.dart';
 
 /// Two-pane home: conversation sidebar + canvas detail (DESIGN.md §6
 /// "Sidebar / home"). On macOS the screen also owns the native menu bar
@@ -108,6 +109,37 @@ class HomeScreen extends ConsumerWidget {
           ),
         ],
       ),
+      PlatformMenu(
+        label: 'View',
+        menus: [
+          PlatformMenuItem(
+            label: 'Project Wiki…',
+            shortcut: const SingleActivator(
+              LogicalKeyboardKey.keyK,
+              meta: true,
+              shift: true,
+            ),
+            onSelected: () => _openWiki(context, ref),
+          ),
+        ],
+      ),
     ];
+  }
+
+  /// Opens the generated wiki for the selected conversation's project (or
+  /// 'default'). Mirrors the sidebar button (DESIGN.md §10), reachable from the
+  /// macOS menu / ⌘⇧K.
+  Future<void> _openWiki(BuildContext context, WidgetRef ref) async {
+    final selected = ref.read(selectedConversationIdProvider);
+    var projectId = 'default';
+    if (selected != null) {
+      final db = ref.read(databaseProvider);
+      final conversation = await (db.select(db.conversations)
+            ..where((c) => c.id.equals(selected)))
+          .getSingleOrNull();
+      projectId = conversation?.projectId ?? 'default';
+    }
+    if (!context.mounted) return;
+    await WikiScreen.open(context, projectId);
   }
 }

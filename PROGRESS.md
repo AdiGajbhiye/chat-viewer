@@ -15,6 +15,45 @@ shortcuts, Android input, import warnings).
 
 ## Log
 
+- 2026-06-25 · M9.2 · generated read-only project wiki (DESIGN.md §10 "Project
+  wiki … entities as hyperlinked pages, facts as content, `fact_sources` for
+  click-through; topical clustering — topics cross branches"). **Data**:
+  `WikiService` + `wikiServiceProvider` (`state/wiki.dart`, db + reuses
+  `factsServiceProvider` for active-only facts). **Topical clustering is offline
+  & deterministic**: connected components (union-find) over the project's
+  `soft_edges` graph (semantic + entity + crossSession — REUSES M8.1, no
+  k-means/LLM); turns linked by association land in one topic regardless of fork
+  structure, which is the point. Determinism: edges fed in sorted order, the
+  smaller root chosen as representative, components sorted size-desc then least
+  turn id → same graph ⇒ same topics, same order. Components of ≥2 turns become
+  topics; singletons stay in the all-entities/all-facts lists. `overview`
+  (topics + entities-with-mention-counts + active facts, fact provenance
+  pre-resolved), `entityPage` (Obsidian-style backlinks: the facts + proposition
+  snippets + turns mentioning an entity), `entitiesForProject` (grouped
+  `turn_entities` counts, stable order), `conversationOfTurn` for click-through.
+  Providers `wikiOverviewProvider`/`entityPageProvider` (autoDispose.family).
+  **UI** (`ui/wiki/wiki_view.dart`, read-only): `WikiScreen` full-screen route —
+  overview (topics, all-entities index as hyperlinked chips, all-facts list;
+  facts/props render via `gpt_markdown`) + per-entity page; entity chips
+  navigate to entity pages; every fact/proposition carries an "open source turn"
+  click-through. **Click-through reuses the existing reader/selection mechanism**
+  (no new routing): tapping provenance publishes a `WikiNavRequest`
+  (`wikiNavRequestProvider`), selects the turn's conversation, and pops to home;
+  the matching `CanvasView` consumes the request post-frame via the existing
+  `_enterRead(turnId)`, then clears it. **Entry points**: a sidebar app-bar
+  "Project wiki" button (book icon) + a macOS **View ▸ Project Wiki…** menu item
+  (⌘⇧K); both resolve the selected conversation's project (default 'default').
+  Fully offline, no LLM prose (cluster-summaries deferred). analyze clean +
+  **18 new tests** (14 data: clustering components/cross-branch/singletons/
+  insertion-order-determinism/crossSession/topic-attachments, mention counts +
+  ordering + project scope, entity backlinks, active-only facts excludes
+  superseded, conversationOfTurn; 4 widget: overview renders topics+entities+
+  facts, entity-chip → entity page, fact provenance click-through selects the
+  source conversation + opens the reader, empty-wiki state); macOS-menu test
+  updated for the new View menu. **291 tests** green. Visual verification
+  deferred (project convention — goldens don't match macOS Impeller); the widget
+  test is the gate.
+
 - 2026-06-25 · M9.1 · commit action — promote text into the facts layer
   (DESIGN.md §10, Layer 2 "the keystone"). **Service**: `FactsService` +
   `factsServiceProvider` (`state/facts.dart`, depends on db + the offline-stub

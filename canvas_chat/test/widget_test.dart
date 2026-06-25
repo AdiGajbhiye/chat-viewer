@@ -781,7 +781,8 @@ void main() {
         final labels = [
           for (final menu in menuBar.menus) (menu as PlatformMenu).label,
         ];
-        expect(labels, ['Canvas Chat', 'File', 'Edit']);
+        // 'View' carries the generated project wiki (M9.2).
+        expect(labels, ['Canvas Chat', 'File', 'Edit', 'View']);
         final fileItems = (menuBar.menus[1] as PlatformMenu)
             .menus
             .expand((item) => item is PlatformMenuItemGroup
@@ -794,6 +795,12 @@ void main() {
           ['Import Export Zip…', 'Import Extracted Folder…',
               'Import Warnings…'],
         );
+        // The View menu exposes the generated project wiki (M9.2).
+        final viewItems = [
+          for (final item in (menuBar.menus[3] as PlatformMenu).menus)
+            item.label,
+        ];
+        expect(viewItems, ['Project Wiki…']);
 
         // ⌘F focuses the sidebar search field even while the canvas has
         // keyboard focus.
