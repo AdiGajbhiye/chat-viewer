@@ -10,6 +10,7 @@ import '../data/db/database.dart';
 import '../domain/grid_layout.dart';
 import '../domain/markdown_blocks.dart';
 import '../state/branching.dart';
+import '../state/facts.dart';
 import '../state/providers.dart';
 import 'canvas/node_card.dart';
 
@@ -564,7 +565,40 @@ class TurnBody extends ConsumerWidget {
         _branch(service, 'Expand on this with concrete examples:', chunk);
       case ChunkAction.ask:
         _askThenBranch(context, service, chunk);
+      case ChunkAction.commit:
+        _commit(context, ref, chunk);
     }
+  }
+
+  /// Promotes [chunk] into the committed-facts layer (DESIGN.md §10, Layer 2):
+  /// a project-scoped, session-pinned, turn-sourced fact. Embedding + persist
+  /// run offline via [factsServiceProvider]; the source turn's conversation
+  /// supplies the projectId (and pins the fact to the session). Gives a SnackBar
+  /// just like the Copy action — committing is settled, not a fork.
+  Future<void> _commit(
+    BuildContext context,
+    WidgetRef ref,
+    String chunk,
+  ) async {
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    final db = ref.read(databaseProvider);
+    final conversation = await (db.select(db.conversations)
+          ..where((c) => c.id.equals(turn.conversationId)))
+        .getSingleOrNull();
+    if (conversation == null) return;
+    await ref.read(factsServiceProvider).commitFact(
+          text: stripChatMarkers(chunk).trim(),
+          sourceTurnIds: [turn.id],
+          projectId: conversation.projectId,
+          conversationId: conversation.id,
+        );
+    messenger?.showSnackBar(
+      const SnackBar(
+        content: Text('Committed as a fact'),
+        duration: Duration(seconds: 1),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
   }
 
   /// Pops a composer prefilled with the quoted [chunk]; on submit, forks a
@@ -678,9 +712,10 @@ class _MarkdownWithAssets extends StatelessWidget {
 
 /// The actions a response chunk's hover toolbar can fire. [ask] / [explain] /
 /// [expand] each fork a child branch off the turn (DESIGN.md §9 forking; the
-/// answer comes from the pluggable [LlmProvider]); [copy] is a local clipboard
-/// copy.
-enum ChunkAction { ask, explain, expand, copy }
+/// answer comes from the pluggable [LlmProvider]); [commit] promotes the passage
+/// into the committed-facts layer (DESIGN.md §10, Layer 2); [copy] is a local
+/// clipboard copy.
+enum ChunkAction { ask, explain, expand, commit, copy }
 
 /// The assistant response, split into block-level chunks (paragraphs, lists,
 /// code fences — [splitMarkdownBlocks]) interleaved with [AssetBlock]s, returned
@@ -824,6 +859,11 @@ class _ChunkToolbar extends StatelessWidget {
               icon: Icons.unfold_more,
               tooltip: 'Expand on this',
               onPressed: () => onAction(ChunkAction.expand),
+            ),
+            _ChunkToolbarButton(
+              icon: Icons.push_pin_outlined,
+              tooltip: 'Commit as a fact',
+              onPressed: () => onAction(ChunkAction.commit),
             ),
             _ChunkToolbarButton(
               icon: Icons.content_copy,

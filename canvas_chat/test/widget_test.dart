@@ -17,6 +17,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:gpt_markdown/gpt_markdown.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'helpers/synthetic_export.dart';
 
@@ -949,6 +950,80 @@ void main() {
       await tester.sendKeyEvent(LogicalKeyboardKey.escape);
       await tester.pumpAndSettle();
       expect(find.byType(SoftEdgesToggle), findsOneWidget);
+
+      await unmountApp(tester);
+    });
+  });
+
+  group('commit action (M9.1)', () {
+    Finder inOverlay(Finder matching) =>
+        find.descendant(of: find.byType(ReadOverlay), matching: matching);
+
+    /// The full app with prefs overridden — the commit path reads the embedding
+    /// config from SharedPreferences (like the fork path), so the provider must
+    /// be present. With no stored key the config stays unconfigured → the
+    /// offline stub embedder, keeping the commit deterministic and offline.
+    Widget appWithPrefs(SharedPreferences prefs) => ProviderScope(
+          overrides: [
+            databaseProvider.overrideWithValue(db),
+            assetsDirProvider.overrideWithValue(assetsDir),
+            sharedPreferencesProvider.overrideWithValue(prefs),
+          ],
+          child: const CanvasChatApp(),
+        );
+
+    testWidgets(
+        'the chunk toolbar shows Commit and committing creates a sourced fact',
+        (tester) async {
+      SharedPreferences.setMockInitialValues({});
+      final prefs = await SharedPreferences.getInstance();
+      await seed(tester);
+      await tester.pumpWidget(appWithPrefs(prefs));
+      await tester.pumpAndSettle();
+
+      // Open the reader on the "first answer" branch (a single-chunk response).
+      await tester.tap(find.text('Forked chat'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('Read view'));
+      await tester.pumpAndSettle();
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
+      await tester.pumpAndSettle();
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+      await tester.pumpAndSettle();
+      final chunk =
+          inOverlay(find.textContaining('first answer', findRichText: true));
+      expect(chunk, findsOneWidget);
+
+      // Hover the chunk → its toolbar fades in, with the Commit action present
+      // alongside Ask / Explain / Expand / Copy.
+      final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+      await mouse.addPointer(location: Offset.zero);
+      addTearDown(() => mouse.removePointer());
+      await mouse.moveTo(tester.getCenter(chunk));
+      await tester.pumpAndSettle();
+      expect(find.byTooltip('Commit as a fact'), findsOneWidget);
+
+      // Commit → the passage becomes an active, turn-sourced fact, with a
+      // SnackBar acknowledgement (mirrors the Copy action's feedback).
+      await tester.tap(find.byTooltip('Commit as a fact'));
+      await tester.pumpAndSettle();
+      expect(find.text('Committed as a fact'), findsOneWidget);
+
+      final facts = await tester.runAsync(() => db.select(db.facts).get());
+      expect(facts, hasLength(1));
+      final fact = facts!.single;
+      expect(fact.status, 'active');
+      expect(fact.factText, contains('first answer'));
+      // Session-pinned to the conversation it was committed from.
+      expect(fact.conversationId, 'conv-forked');
+      expect(fact.embedding, isNotNull);
+
+      // Provenance: the fact is sourced from the turn whose chunk was committed.
+      final sources = await tester.runAsync(
+        () => (db.select(db.factSources)..where((s) => s.factId.equals(fact.id)))
+            .get(),
+      );
+      expect(sources!.map((s) => s.turnId), ['conv-forked:f-a1']);
 
       await unmountApp(tester);
     });

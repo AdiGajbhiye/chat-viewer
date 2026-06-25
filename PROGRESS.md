@@ -15,6 +15,33 @@ shortcuts, Android input, import warnings).
 
 ## Log
 
+- 2026-06-25 · M9.1 · commit action — promote text into the facts layer
+  (DESIGN.md §10, Layer 2 "the keystone"). **Service**: `FactsService` +
+  `factsServiceProvider` (`state/facts.dart`, depends on db + the offline-stub
+  `embeddingProviderProvider`). `commitFact({text, sourceTurnIds, projectId,
+  conversationId?, supersedesId?})` embeds the text (`encodeEmbedding`, no
+  network), inserts an `active` fact (`status='active'`, `createdAt=now`,
+  `conversationId` set = session-pinned, null = project-wide), and writes a
+  `fact_sources` provenance row per source turn — all in **one transaction**.
+  **Supersession**: when `supersedesId` is given, the prior fact flips to
+  `superseded` and the new one chains its `supersedesId` to it. Query helpers
+  for M9.2/M9.3 to reuse: `activeFactsForProject` / `activeFactsForConversation`
+  (both exclude superseded; the conversation form returns session-pinned +
+  project-wide) and `factSources(factId)`. **UI**: a **Commit as a fact**
+  action (`ChunkAction.commit`, push-pin icon) added to the read-mode per-chunk
+  toolbar in `ui/read_view.dart` alongside Ask/Explain/Expand/Copy; tapping it
+  commits the chunk sourced from the focused turn (projectId + conversationId
+  resolved from the turn's conversation) with a SnackBar ack, mirroring Copy's
+  feedback. Supersession via the UI is deferred — a plain commit — but the
+  **service** fully supports and tests it. Committed active facts already feed
+  the retrieval boost (M8.2 reads `facts WHERE status='active'`); a test asserts
+  a committed fact rides into the assembled context tagged `committed` and that
+  superseding it removes it. analyze clean + **7 new tests** (6 service incl.
+  embed round-trip / provenance / supersession-excludes / retrieval-integration,
+  1 widget: the toolbar shows Commit and committing writes a sourced fact row).
+  Visual verification deferred (project convention — goldens don't match macOS
+  Impeller); the widget test is the gate.
+
 - 2026-06-25 · M8.3 · soft-edge canvas layer (DESIGN.md §10 "Soft edges":
   "rendered as a canvas layer") — visualizes the precomputed `soft_edges` (M8.1),
   toggleable and **default off**. **Provider**:
