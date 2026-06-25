@@ -15,6 +15,25 @@ shortcuts, Android input, import warnings).
 
 ## Log
 
+- 2026-06-25 · M6.3 · proposition + entity extraction (DESIGN.md §10) — the
+  `PropositionExtractor` interface (`extract(Turn, {parentContext}) →
+  TurnExtraction` of ~5 atomic, standalone, coref-resolved props, each with an
+  open-vocab aspect + raw entity strings). Two impls cloning the stub-vs-real
+  pattern: `StubPropositionExtractor` (default, fully offline, deterministic
+  sentence/line segmentation capped at 5, shape-based aspect tag, naive entities
+  from `code`/"quoted"/Capitalized tokens — stable arithmetic, no `hashCode`) and
+  `LlmPropositionExtractor` (wraps an `LlmProvider`, asks for STRICT JSON,
+  collects the stream, parses robustly through ```json fences + leading/trailing
+  prose by slicing the outermost balanced array, throws `LlmException` on failure).
+  `propositionExtractorProvider` resolves stub vs LLM off `llmConfigProvider`.
+  Persistence: `AppDatabase.persistTurnExtraction(...)` — transactional,
+  idempotent for re-index (clears the turn's prior propositions + turn_entities
+  first, never deletes shared entities), upserts entities deduped by
+  `(projectId, normalized)`, accepts optional same-order embeddings encoded via
+  `encodeEmbedding` with an `embeddingModel`. Strictly additive — nothing calls it
+  yet (the indexer wires it). analyze clean + 19 tests (stub determinism/cap/
+  entities/aspect, LLM plain/fenced/prose/chunked/error parsing, persistence
+  write/dedup/re-index-replace/embedding round-trip).
 - 2026-06-25 · M6.2 · embedding layer (DESIGN.md §10) — the `EmbeddingProvider`
   interface (clones the `LlmProvider` pattern): `embed(List<String>)` batch,
   order-preserving, one vector per input, plus a `modelId` to stamp

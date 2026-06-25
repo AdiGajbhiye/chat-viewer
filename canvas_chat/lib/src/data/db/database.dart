@@ -1,5 +1,8 @@
 import 'package:drift/drift.dart';
 
+import '../llm/embedding_math.dart';
+import '../llm/proposition_extractor.dart';
+
 part 'database.g.dart';
 
 /// `conversations` table (DESIGN.md §4).
@@ -431,4 +434,124 @@ class AppDatabase extends _$AppDatabase {
         ..orderBy([(i) => OrderingTerm.desc(i.id)])
         ..limit(1))
       .getSingleOrNull();
+
+  /// Persists a turn's [extraction] (DESIGN.md §10 proposition / entity index):
+  /// writes one `propositions` row per [ExtractedProposition], upserts the
+  /// referenced `entities` (deduped by `(projectId, normalized)`, reusing
+  /// existing rows), and links them via `turn_entities`. All in one transaction.
+  ///
+  /// **Idempotent for re-index**: every existing `propositions` and
+  /// `turn_entities` row for [turnId] is cleared first, so re-running never
+  /// duplicates. Entities are never deleted — they're shared across turns — only
+  /// new ones are inserted.
+  ///
+  /// When [embeddings] is supplied it must be the **same length and order** as
+  /// `extraction.propositions`; each vector is encoded ([encodeEmbedding]) into
+  /// the matching row with [embeddingModel]. Omit it (the default) to leave the
+  /// `embedding` column null for the indexer to backfill.
+  Future<void> persistTurnExtraction({
+    required String turnId,
+    required String conversationId,
+    required String projectId,
+    required TurnExtraction extraction,
+    List<List<double>>? embeddings,
+    String? embeddingModel,
+  }) async {
+    final propositions = extraction.propositions;
+    if (embeddings != null && embeddings.length != propositions.length) {
+      throw ArgumentError(
+        'embeddings (${embeddings.length}) must match propositions '
+        '(${propositions.length})',
+      );
+    }
+    final now = DateTime.now().millisecondsSinceEpoch;
+
+    await transaction(() async {
+      // Idempotent re-index: drop this turn's prior propositions + entity links
+      // before re-inserting. Entities themselves are shared and left in place.
+      await (delete(this.propositions)..where((p) => p.turnId.equals(turnId)))
+          .go();
+      await (delete(turnEntities)..where((te) => te.turnId.equals(turnId)))
+          .go();
+
+      // Propositions. Deterministic ids ('<turnId>#<index>') keep a re-index
+      // stable and make the rows easy to trace back to a turn.
+      final propRows = <PropositionsCompanion>[];
+      for (var i = 0; i < propositions.length; i++) {
+        final prop = propositions[i];
+        final vector = embeddings?[i];
+        propRows.add(
+          PropositionsCompanion.insert(
+            id: '$turnId#$i',
+            turnId: turnId,
+            conversationId: conversationId,
+            projectId: projectId,
+            propText: prop.text,
+            aspect: Value(prop.aspect),
+            embedding:
+                Value(vector == null ? null : encodeEmbedding(vector)),
+            embeddingModel:
+                Value(vector == null ? null : embeddingModel),
+            createdAt: Value(now),
+          ),
+        );
+      }
+      if (propRows.isNotEmpty) {
+        await batch((b) => b.insertAll(this.propositions, propRows));
+      }
+
+      // Entities, deduped by (projectId, normalized). Reuse an existing row if
+      // one already exists for this project; otherwise create it. The map keys
+      // off `normalized` so two surfaces of the same entity within this turn
+      // collapse to one row / one link.
+      final wantedByNormalized = <String, String>{}; // normalized -> surface
+      for (final prop in propositions) {
+        for (final surface in prop.entities) {
+          final normalized = surface.trim().toLowerCase();
+          if (normalized.isEmpty) continue;
+          wantedByNormalized.putIfAbsent(normalized, () => surface.trim());
+        }
+      }
+
+      final entityIdByNormalized = <String, String>{};
+      if (wantedByNormalized.isNotEmpty) {
+        final existing = await (select(entities)
+              ..where((e) =>
+                  e.projectId.equals(projectId) &
+                  e.normalized.isIn(wantedByNormalized.keys.toList())))
+            .get();
+        for (final row in existing) {
+          entityIdByNormalized[row.normalized] = row.id;
+        }
+
+        final newEntityRows = <EntitiesCompanion>[];
+        for (final entry in wantedByNormalized.entries) {
+          if (entityIdByNormalized.containsKey(entry.key)) continue;
+          final id = 'ent:$projectId:${entry.key}';
+          entityIdByNormalized[entry.key] = id;
+          newEntityRows.add(
+            EntitiesCompanion.insert(
+              id: id,
+              projectId: projectId,
+              name: entry.value,
+              normalized: entry.key,
+            ),
+          );
+        }
+        if (newEntityRows.isNotEmpty) {
+          await batch((b) => b.insertAll(entities, newEntityRows));
+        }
+      }
+
+      // turn_entities links, deduped by entity id (the turn mentions each entity
+      // once for the wiki backlink, regardless of how many propositions cite it).
+      if (entityIdByNormalized.isNotEmpty) {
+        final linkRows = [
+          for (final entityId in entityIdByNormalized.values.toSet())
+            TurnEntitiesCompanion.insert(entityId: entityId, turnId: turnId),
+        ];
+        await batch((b) => b.insertAll(turnEntities, linkRows));
+      }
+    });
+  }
 }

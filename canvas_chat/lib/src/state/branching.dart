@@ -6,6 +6,7 @@ import '../data/llm/embedding_provider.dart';
 import '../data/llm/llm_provider.dart';
 import '../data/llm/openai_compatible_embedding_provider.dart';
 import '../data/llm/openai_compatible_provider.dart';
+import '../data/llm/proposition_extractor.dart';
 import 'providers.dart';
 
 /// Connection settings for the live provider, persisted in shared-prefs and
@@ -148,6 +149,17 @@ final embeddingProviderProvider = Provider<EmbeddingProvider>((ref) {
   final provider = OpenAiCompatibleEmbeddingProvider(config);
   ref.onDispose(provider.close);
   return provider;
+});
+
+/// The proposition + entity extractor used by the index (DESIGN.md §10). Reuses
+/// [llmProviderProvider]: once a usable LLM key is present it resolves to the
+/// model-backed [LlmPropositionExtractor], and otherwise to the fully-offline
+/// [StubPropositionExtractor]. Nothing calls this yet (M6.3 is strictly additive
+/// — the indexer step wires it).
+final propositionExtractorProvider = Provider<PropositionExtractor>((ref) {
+  final config = ref.watch(llmConfigProvider);
+  if (!config.isConfigured) return const StubPropositionExtractor();
+  return LlmPropositionExtractor(ref.watch(llmProviderProvider));
 });
 
 /// Turn ids whose response is currently streaming in (DESIGN.md §9 "pending"
