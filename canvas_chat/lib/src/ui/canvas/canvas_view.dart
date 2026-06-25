@@ -10,11 +10,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/db/database.dart';
 import '../../domain/grid_layout.dart';
+import '../../state/indexing.dart';
 import '../../state/providers.dart';
 import '../read_view.dart';
 import 'canvas_metrics.dart';
 import 'canvas_viewport.dart';
 import 'edge_painter.dart';
+import 'indexing_indicator.dart';
 import 'node_card.dart';
 
 /// The two views the bottom-right toggle switches between: [graph] is the
@@ -106,6 +108,14 @@ class _CanvasViewState extends ConsumerState<CanvasView>
     _db = ref.read(databaseProvider);
     _viewport.addListener(_onViewportChanged);
     _navAnim.addListener(_onNavAnimTick);
+    // Kick the lazy index for this conversation on open (DESIGN.md §10). A
+    // fresh CanvasView is built per conversation (keyed by id in HomeScreen),
+    // so this fires exactly once per open. Fire-and-forget after first paint so
+    // it never blocks the canvas appearing; it no-ops when already indexed or
+    // when indexing is disabled/unavailable (e.g. widget tests).
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) triggerIndexOnOpen(ref, widget.conversationId);
+    });
   }
 
   @override
@@ -209,6 +219,18 @@ class _CanvasViewState extends ConsumerState<CanvasView>
                   onNext: () => _gotoMatch(1),
                 ),
               ),
+            // Lazy-index progress chip (DESIGN.md §10), top-left so it clears
+            // the find bar / toggle. Shows only while this conversation is
+            // indexing and hides itself once indexed.
+            Positioned(
+              top: 8,
+              left: 8,
+              child: SafeArea(
+                child: IndexingIndicator(
+                  conversationId: widget.conversationId,
+                ),
+              ),
+            ),
             // The view toggle (graph · read), always visible bottom-right.
             Positioned(
               right: 8,

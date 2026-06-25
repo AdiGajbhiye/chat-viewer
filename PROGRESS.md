@@ -15,6 +15,37 @@ shortcuts, Android input, import warnings).
 
 ## Log
 
+- 2026-06-25 · M7 · lazy indexer (DESIGN.md §10) — index-on-open, active-path-first.
+  `ConversationIndexer` (`state/indexing.dart`) loads a conversation's turns,
+  orders them **active-path-first** (pure `indexOrder` = `activePath` first, then
+  off-path turns by create_time/id — tested directly), then per turn
+  `extract(parentContext: ancestors) → embed(texts) → persistTurnExtraction(...,
+  embeddingModel)`, one batched embed call per turn, awaiting `Future.delayed
+  (Duration.zero)` between turns so a long session doesn't jank the UI thread (an
+  isolate is avoided — the work is await-driven I/O and riverpod providers/HTTP
+  don't cross isolates). Drives the `index_state` machine
+  (notIndexed→indexing→indexed; `indexed_at` stamped on success); a conversation
+  left at `indexing` (prior crash) re-runs safely since persist is idempotent per
+  turn. **Double-start guard**: a process-wide in-flight set claimed
+  *synchronously* before the first await, so two overlapping opens never
+  double-process. **Staleness**: `markStaleIfModelChanged` flips an `indexed`
+  conversation whose stored `embedding_model` ≠ the current provider `modelId` to
+  `stale`, and the trigger re-indexes (full-project re-embed is M9.3). Offline-safe
+  (stub extractor/embedder by default; zero-turn conversations complete cleanly to
+  indexed). Progress exposed via `indexingProgressProvider`
+  (`Map<convId, IndexingProgress{state,done,total}>`, mirrors
+  `generatingTurnsProvider`); on-canvas `IndexingIndicator` chip (top-left) shows
+  "Indexing N/M…" while `indexing`, hides when `indexed`. **Trigger**: a
+  post-frame `triggerIndexOnOpen(ref, id)` in `CanvasView.initState` (fresh
+  instance per conversation, keyed by id), fire-and-forget so it never blocks
+  first paint. It stays green against existing widget tests — which don't override
+  `sharedPreferencesProvider` (the indexer's extractor/embedder providers need it)
+  — by catching the resulting `StateError` and no-opping; an `indexingEnabled
+  Provider` (default true) also lets a test disable it outright. analyze clean; 14
+  new tests (indexOrder ordering, happy-path persist+embed+state, end-to-end
+  active-path-first via a recording extractor, double-start guard, zero-turn,
+  already-indexed no-op, staleness re-index + same-model-not-stale, progress
+  transitions, indicator show/hide/scoping), 215 total pass.
 - 2026-06-25 · M6.3 · proposition + entity extraction (DESIGN.md §10) — the
   `PropositionExtractor` interface (`extract(Turn, {parentContext}) →
   TurnExtraction` of ~5 atomic, standalone, coref-resolved props, each with an
