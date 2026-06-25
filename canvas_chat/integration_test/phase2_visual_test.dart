@@ -307,4 +307,30 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pumpAndSettle();
   });
+
+  testWidgets('reader: generated-index panel on the right-hand side',
+      (tester) async {
+    tester.view.physicalSize = const Size(1280, 900);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await seedIndexed(tester);
+    await tester.pumpWidget(appWith(ThemeMode.dark));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Index store design'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Read view'));
+    await tester.pumpAndSettle();
+
+    // On a wide pane the generated-index panel shows on the right by default:
+    // the focused turn's propositions (with aspect tags) + entity chips.
+    expect(find.byKey(const Key('read-index-panel')), findsOneWidget);
+    expect(find.textContaining('Generated index'), findsWidgets);
+    await shot(tester, '09_reader_index_panel');
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpAndSettle();
+  });
 }
