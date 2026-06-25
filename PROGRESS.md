@@ -15,6 +15,22 @@ shortcuts, Android input, import warnings).
 
 ## Log
 
+- 2026-06-25 · M6.2 · embedding layer (DESIGN.md §10) — the `EmbeddingProvider`
+  interface (clones the `LlmProvider` pattern): `embed(List<String>)` batch,
+  order-preserving, one vector per input, plus a `modelId` to stamp
+  `propositions.embedding_model`. Two impls: `StubEmbeddingProvider` (default,
+  fully offline, deterministic same-text→same-vector FNV-1a token hashing into a
+  fixed 256-dim L2-normalized vector, `modelId` `stub-256`) and
+  `OpenAiCompatibleEmbeddingProvider` (POSTs the batch as `input` to
+  `/embeddings`, parses `data[].embedding`, reuses the chat host plumbing +
+  `LlmException`). `embeddingConfigProvider`/`embeddingProviderProvider` resolve
+  stub vs live exactly like `llmConfigProvider`/`llmProviderProvider` (stub when
+  unconfigured/offline), reusing `llm.baseUrl`/`llm.apiKey` and adding
+  `embedding.model`. New `embedding_math.dart` centralizes the float32-LE codec
+  (`encodeEmbedding`/`decodeEmbedding`, round-trippable) + `cosineSimilarity`
+  (zero-norm/length-guarded). Strictly additive — nothing calls these yet.
+  analyze clean; 26 new tests (stub determinism/dim/L2-norm, codec round-trip,
+  cosine, OpenAI batching + provider resolution), 184 pass.
 - 2026-06-25 · M6.1 · drift migration v3 — the Phase-2 schema foundation
   (DESIGN.md §10), schema only, no behavior change (nothing reads the new
   tables yet). Adds the Project tier (`projects`) plus

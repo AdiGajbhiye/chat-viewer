@@ -2,7 +2,9 @@ import 'package:drift/drift.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../data/db/database.dart';
+import '../data/llm/embedding_provider.dart';
 import '../data/llm/llm_provider.dart';
+import '../data/llm/openai_compatible_embedding_provider.dart';
 import '../data/llm/openai_compatible_provider.dart';
 import 'providers.dart';
 
@@ -74,6 +76,76 @@ final llmProviderProvider = Provider<LlmProvider>((ref) {
   final config = ref.watch(llmConfigProvider);
   if (!config.isConfigured) return const StubLlmProvider();
   final provider = OpenAiCompatibleProvider(config);
+  ref.onDispose(provider.close);
+  return provider;
+});
+
+/// Embedding connection settings (DESIGN.md §10 proposition / fact index).
+/// Reuses the chat config's host (`llm.baseUrl` / `llm.apiKey` — an
+/// OpenAI-compatible host serves both chat and embeddings) and adds only the
+/// embedding model name (`embedding.model`, seeded from `--dart-define`). Until
+/// a usable host is present the app stays on the offline
+/// [StubEmbeddingProvider].
+final embeddingConfigProvider =
+    NotifierProvider<EmbeddingConfigNotifier, EmbeddingConfig>(
+  EmbeddingConfigNotifier.new,
+);
+
+class EmbeddingConfigNotifier extends Notifier<EmbeddingConfig> {
+  // Host fields are shared with the chat config (same prefs keys).
+  static const _kBaseUrl = 'llm.baseUrl';
+  static const _kApiKey = 'llm.apiKey';
+  static const _kModel = 'embedding.model';
+
+  @override
+  EmbeddingConfig build() {
+    final prefs = ref.watch(sharedPreferencesProvider);
+    const seed = EmbeddingConfig(
+      baseUrl: String.fromEnvironment(
+        'OPENAI_BASE_URL',
+        defaultValue: 'https://api.openai.com/v1',
+      ),
+      apiKey: String.fromEnvironment('OPENAI_API_KEY'),
+      model: String.fromEnvironment(
+        'OPENAI_EMBEDDING_MODEL',
+        defaultValue: 'text-embedding-3-small',
+      ),
+    );
+    return EmbeddingConfig(
+      baseUrl: prefs.getString(_kBaseUrl) ?? seed.baseUrl,
+      apiKey: prefs.getString(_kApiKey) ?? seed.apiKey,
+      model: prefs.getString(_kModel) ?? seed.model,
+    );
+  }
+
+  /// Trims, persists, and publishes [config]; `embeddingProviderProvider`
+  /// rebuilds onto the new backend immediately. The host fields share the chat
+  /// config's prefs keys, so writing here keeps the two in sync.
+  Future<void> set(EmbeddingConfig config) async {
+    final normalized = EmbeddingConfig(
+      baseUrl: config.baseUrl.trim(),
+      apiKey: config.apiKey.trim(),
+      model: config.model.trim(),
+    );
+
+    final prefs = ref.read(sharedPreferencesProvider);
+    await prefs.setString(_kBaseUrl, normalized.baseUrl);
+    await prefs.setString(_kApiKey, normalized.apiKey);
+    await prefs.setString(_kModel, normalized.model);
+
+    state = normalized;
+  }
+}
+
+/// The embedding backend used by the index / retrieval layer. Resolves to a
+/// live [OpenAiCompatibleEmbeddingProvider] once [embeddingConfigProvider] holds
+/// a usable host, and otherwise to the fully-offline [StubEmbeddingProvider];
+/// the rest of the app is provider-agnostic. Nothing calls this yet (M6.2 is
+/// strictly additive).
+final embeddingProviderProvider = Provider<EmbeddingProvider>((ref) {
+  final config = ref.watch(embeddingConfigProvider);
+  if (!config.isConfigured) return const StubEmbeddingProvider();
+  final provider = OpenAiCompatibleEmbeddingProvider(config);
   ref.onDispose(provider.close);
   return provider;
 });
