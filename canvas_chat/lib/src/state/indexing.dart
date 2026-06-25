@@ -9,6 +9,7 @@ import '../data/llm/proposition_extractor.dart';
 import '../domain/active_path.dart';
 import 'branching.dart';
 import 'providers.dart';
+import 'soft_edges.dart';
 
 /// The lazy-index state machine values mirrored from `conversations.index_state`
 /// (DESIGN.md §10): a conversation is indexed on session open, active-path-first.
@@ -314,6 +315,14 @@ final conversationIndexerProvider = Provider<ConversationIndexer>((ref) {
   );
 });
 
+/// Builds a [SoftEdgeComputer] from the app's providers. Reading it only needs
+/// [databaseProvider] (the precompute is offline — it reads stored proposition
+/// embeddings + entity links, no network), so it's safe to resolve on the
+/// on-open path.
+final softEdgeComputerProvider = Provider<SoftEdgeComputer>(
+  (ref) => SoftEdgeComputer(ref.watch(databaseProvider)),
+);
+
 /// Whether the on-open indexing trigger is allowed to fire. Defaults to `true`
 /// so the real app indexes on session open. Existing widget/integration tests
 /// don't override `sharedPreferencesProvider` (the indexer's providers need
@@ -332,8 +341,10 @@ final indexingEnabledProvider = Provider<bool>((ref) => true);
 Future<void> triggerIndexOnOpen(WidgetRef ref, String conversationId) async {
   if (!ref.read(indexingEnabledProvider)) return;
   ConversationIndexer indexer;
+  SoftEdgeComputer softEdges;
   try {
     indexer = ref.read(conversationIndexerProvider);
+    softEdges = ref.read(softEdgeComputerProvider);
   } catch (_) {
     // Providers unavailable (e.g. prefs not overridden in a widget test):
     // opening a conversation must not depend on the index, so just skip.
@@ -344,7 +355,13 @@ Future<void> triggerIndexOnOpen(WidgetRef ref, String conversationId) async {
     // whether to (re)index.
     await indexer.markStaleIfModelChanged(conversationId);
     await indexer.ensureIndexed(conversationId);
+    // Indexing has now landed `indexed` (or was already): precompute this
+    // conversation's soft edges from the freshly persisted propositions +
+    // entities (DESIGN.md §10). Offline and idempotent — a re-open recomputes
+    // cleanly without duplicating rows.
+    await softEdges.recomputeForConversation(conversationId);
   } catch (_) {
-    // Indexing is best-effort; a failure never surfaces to the canvas.
+    // Indexing / soft-edge precompute is best-effort; a failure never surfaces
+    // to the canvas.
   }
 }

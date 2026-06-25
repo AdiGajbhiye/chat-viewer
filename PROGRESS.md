@@ -15,6 +15,25 @@ shortcuts, Android input, import warnings).
 
 ## Log
 
+- 2026-06-25 · M8.1 · soft-edge precompute (DESIGN.md §10) — semantic k-NN over
+  proposition embeddings + entity-overlap edges. `SoftEdgeComputer`
+  (`state/soft_edges.dart`).`recomputeForConversation(id, {semanticK=5,
+  semanticThreshold=0.5})` scopes to one conversation's turns. **Semantic**:
+  turn-to-turn similarity = **max cosine over the cross-product** of the two
+  turns' proposition vectors ("related at all" — survives multi-topic turns where
+  a centroid dilutes); keeps each turn's **top-k** neighbours **≥ threshold**,
+  unioning both directed nominations. **Entity**: turns sharing ≥1 entity (via
+  `turn_entities`), weight = **Jaccard** of entity sets. Both canonicalized
+  `from<to` (string compare), no self-edges; a pair qualifying as both stores two
+  rows (distinct `kind`). **Idempotent**: deletes the semantic/entity edges
+  incident to this conversation's turns before reinserting, in one transaction —
+  re-open recomputes without dupes; `crossSession` rows untouched (M9.3). Chained
+  off indexing: `triggerIndexOnOpen` now runs `recomputeForConversation` after
+  `ensureIndexed` resolves (`softEdgeComputerProvider`, db-only so offline-safe),
+  same fire-and-forget/test-no-op guards as M7. O(turns²) within one conversation
+  only. Tests inject hand-crafted embedding BLOBs (stub vectors aren't
+  semantic) — assert math/top-k/threshold/canonicalization/idempotency + an
+  ensureIndexed→recompute integration. analyze clean + 12 tests (227 total).
 - 2026-06-25 · M7 · lazy indexer (DESIGN.md §10) — index-on-open, active-path-first.
   `ConversationIndexer` (`state/indexing.dart`) loads a conversation's turns,
   orders them **active-path-first** (pure `indexOrder` = `activePath` first, then
