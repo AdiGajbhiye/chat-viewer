@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../data/db/database.dart';
 import '../domain/grid_layout.dart';
+import 'retrieval.dart';
 
 /// The app database. Overridden in `main()` (and in tests) with a concrete
 /// instance — there is no sensible default.
@@ -127,6 +128,26 @@ class ShowSoftEdges extends Notifier<bool> {
   bool build() => false;
 
   void toggle() => state = !state;
+}
+
+/// The retrieval breadth used when continuing a session (DESIGN.md §10 "Scope
+/// filter = branch | session | project | all", and §10 "Deferred UI …
+/// Cross-session scope toggle"). **Default [RetrievalScope.project]** — the
+/// index is project-scoped, so project is the sensible breadth and preserves
+/// the prior (pre-toggle) behaviour. Ephemeral session state (not persisted): a
+/// fresh launch starts on `project`. `BranchService` reads this when assembling
+/// context, so flipping it changes which turns are eligible for retrieval; it
+/// has no other side effect (the index itself is unaffected).
+final retrievalScopeProvider =
+    NotifierProvider<RetrievalScopeNotifier, RetrievalScope>(
+  RetrievalScopeNotifier.new,
+);
+
+class RetrievalScopeNotifier extends Notifier<RetrievalScope> {
+  @override
+  RetrievalScope build() => RetrievalScope.project;
+
+  void set(RetrievalScope scope) => state = scope;
 }
 
 /// Conversation selected in the sidebar; null = nothing selected.

@@ -10,8 +10,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/db/database.dart';
 import '../../domain/grid_layout.dart';
+import '../../state/backfill.dart';
 import '../../state/indexing.dart';
 import '../../state/providers.dart';
+import '../../state/retrieval.dart';
 import '../../state/wiki.dart';
 import '../read_view.dart';
 import 'canvas_metrics.dart';
@@ -115,8 +117,16 @@ class _CanvasViewState extends ConsumerState<CanvasView>
     // so this fires exactly once per open. Fire-and-forget after first paint so
     // it never blocks the canvas appearing; it no-ops when already indexed or
     // when indexing is disabled/unavailable (e.g. widget tests).
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) triggerIndexOnOpen(ref, widget.conversationId);
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      // Index the opened conversation first (foreground), then kick the
+      // idle-time backfill so project/all-scope retrieval eventually spans the
+      // whole project, not just opened sessions (DESIGN.md §10). Both are
+      // fire-and-forget and no-op when disabled/unavailable (e.g. widget
+      // tests); the backfill yields the opened conversation to this foreground
+      // index, so chaining it after avoids redundant contention.
+      await triggerIndexOnOpen(ref, widget.conversationId);
+      if (mounted) unawaited(triggerBackfill(ref));
     });
   }
 
@@ -249,6 +259,8 @@ class _CanvasViewState extends ConsumerState<CanvasView>
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
                     if (_viewMode == CanvasViewMode.graph) ...[
+                      const RetrievalScopeSelector(),
+                      const SizedBox(height: 8),
                       const SoftEdgesToggle(),
                       const SizedBox(height: 8),
                     ],
@@ -1023,6 +1035,91 @@ class SoftEdgesToggle extends ConsumerWidget {
             foregroundColor: on
                 ? scheme.onPrimaryContainer
                 : scheme.onSurfaceVariant,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// A compact retrieval-scope picker (DESIGN.md §10 "Scope filter = branch |
+/// session | project | all"), pinned bottom-right above the soft-edge toggle.
+/// A small pill showing the current scope with a popup menu of the four scopes;
+/// reads/writes [retrievalScopeProvider], whose value `BranchService` consults
+/// when continuing a session. **Default project** — the index is project-scoped,
+/// so a fresh launch starts there (matching the prior, pre-toggle behaviour).
+/// Read-only effect: it changes the breadth of retrieval, nothing else.
+class RetrievalScopeSelector extends ConsumerWidget {
+  const RetrievalScopeSelector({super.key});
+
+  /// User-facing label for each scope.
+  static String labelOf(RetrievalScope scope) => switch (scope) {
+        RetrievalScope.branch => 'Branch',
+        RetrievalScope.session => 'Session',
+        RetrievalScope.project => 'Project',
+        RetrievalScope.all => 'All projects',
+      };
+
+  /// One-line description shown under each menu entry.
+  static String _hintOf(RetrievalScope scope) => switch (scope) {
+        RetrievalScope.branch => 'This branch only',
+        RetrievalScope.session => 'This conversation only',
+        RetrievalScope.project => 'The whole project',
+        RetrievalScope.all => 'Across every project',
+      };
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final scheme = Theme.of(context).colorScheme;
+    final scope = ref.watch(retrievalScopeProvider);
+    return Material(
+      elevation: 3,
+      color: scheme.surfaceContainerHighest,
+      borderRadius: BorderRadius.circular(24),
+      child: PopupMenuButton<RetrievalScope>(
+        tooltip: 'Retrieval scope',
+        initialValue: scope,
+        position: PopupMenuPosition.under,
+        onSelected: (s) => ref.read(retrievalScopeProvider.notifier).set(s),
+        itemBuilder: (context) => [
+          for (final s in RetrievalScope.values)
+            PopupMenuItem(
+              value: s,
+              child: ListTile(
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                leading: Icon(
+                  s == scope ? Icons.radio_button_checked : Icons.radio_button_off,
+                  size: 18,
+                ),
+                title: Text(labelOf(s)),
+                subtitle: Text(_hintOf(s)),
+              ),
+            ),
+        ],
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.travel_explore,
+                size: 16,
+                color: scheme.onSurfaceVariant,
+              ),
+              const SizedBox(width: 6),
+              Text(
+                labelOf(scope),
+                style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                      color: scheme.onSurfaceVariant,
+                    ),
+              ),
+              Icon(
+                Icons.arrow_drop_down,
+                size: 18,
+                color: scheme.onSurfaceVariant,
+              ),
+            ],
           ),
         ),
       ),

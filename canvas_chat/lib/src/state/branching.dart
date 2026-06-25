@@ -215,6 +215,10 @@ final branchServiceProvider = Provider<BranchService>(
     ref.watch(databaseProvider),
     ref.watch(llmProviderProvider),
     assembler: ref.watch(contextAssemblerProvider),
+    // Read (not watch) the live scope at branch time so flipping the on-canvas
+    // scope control affects the next branch without rebuilding the service
+    // (DESIGN.md §10 "Scope filter = branch | session | project | all").
+    scope: () => ref.read(retrievalScopeProvider),
     onGenerating: (turnId, generating) {
       final turns = ref.read(generatingTurnsProvider.notifier);
       generating ? turns.add(turnId) : turns.remove(turnId);
@@ -229,7 +233,13 @@ final branchServiceProvider = Provider<BranchService>(
 /// lays it out in a fresh lane to the right — a horizontal branch — whenever
 /// the source already has a continuation below it.
 class BranchService {
-  BranchService(this._db, this._llm, {this.assembler, this.onGenerating});
+  BranchService(
+    this._db,
+    this._llm, {
+    this.assembler,
+    this.onGenerating,
+    this.scope,
+  });
 
   final AppDatabase _db;
   final LlmProvider _llm;
@@ -244,6 +254,13 @@ class BranchService {
   /// app state can track which turns are mid-generation. Optional — tests that
   /// don't care about the pending state omit it.
   final void Function(String turnId, bool generating)? onGenerating;
+
+  /// Reads the user-selected retrieval breadth (DESIGN.md §10 "Scope filter")
+  /// at assemble time, so flipping the on-canvas scope control takes effect on
+  /// the next branch without rebuilding the service. A callback (not a value)
+  /// because the provider's value can change between branches; when null the
+  /// assembler's default scope (`project`) is used.
+  final RetrievalScope Function()? scope;
 
   /// Authored turns get a distinct id namespace so they never collide with
   /// imported `<conversation>:<node>` ids.
@@ -317,8 +334,10 @@ class BranchService {
     }
   }
 
-  /// Loads [parent]'s conversation row and runs the assembler. Kept separate so
-  /// `_stream` stays readable; the assembler default scope is `project`.
+  /// Loads [parent]'s conversation row and runs the assembler over the
+  /// user-selected scope (DESIGN.md §10). Kept separate so `_stream` stays
+  /// readable; when no [scope] getter is wired the assembler's default
+  /// (`project`) applies.
   Future<AssembledContext> _assembleContext(
     ContextAssembler assembler,
     Turn parent,
@@ -331,6 +350,7 @@ class BranchService {
       conversation: conversation,
       parent: parent,
       prompt: prompt,
+      scope: scope?.call() ?? RetrievalScope.project,
     );
   }
 

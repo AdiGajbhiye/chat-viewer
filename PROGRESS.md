@@ -15,6 +15,39 @@ shortcuts, Android input, import warnings).
 
 ## Log
 
+- 2026-06-25 · M9.3 · cross-session retrieval scope toggle + idle-time index
+  backfill (DESIGN.md §10 "Scope filter = branch | session | project | all" +
+  "Cross-session retrieval only sees already-opened sessions until an idle-time
+  background backfill exists"). **Scope toggle**: ephemeral
+  `retrievalScopeProvider` (Notifier, default `project` — the index is
+  project-scoped, preserves prior behaviour) + an on-canvas
+  `RetrievalScopeSelector` pill (bottom-right cluster, above the soft-edge
+  toggle, graph-only) with a 4-way popup. Wired into `BranchService` via a live
+  `scope` getter callback so flipping it changes the *next* branch's retrieval
+  breadth and nothing else; `BranchService._assembleContext` now passes
+  `scope:` into `ContextAssembler.assemble`. `all`-scope filtering was already
+  correct in retrieval (no project/conversation filter) — added a test asserting
+  `all` widens past the project boundary where `project` doesn't. **Backfill**
+  (`state/backfill.dart`): `IndexBackfiller` ORCHESTRATES the existing
+  `ensureIndexed` + `recomputeForConversation` chain (no duplicated indexing
+  logic) — one not-yet-`indexed` conversation at a time, oldest-activity first,
+  yielding a `pacing` delay between each; pausable (`backfillPausedProvider`,
+  live-checked at each conversation boundary, default OFF=not paused) and
+  cancellable (`cancel()`); re-entrancy-guarded; yields any conversation a
+  foreground open-session index is processing (`ConversationIndexer.isIndexing`).
+  `backfillEnabledProvider` is the hard on/off (**default ON** — offline-safe &
+  deterministic under stubs, spends no tokens until a real embedding backend is
+  configured, and trivially pausable; with a real API the pause matters).
+  `triggerBackfill` mirrors `triggerIndexOnOpen` (guards missing prefs, never
+  throws); the canvas chains it after the on-open index. **crossSession edges
+  DEFERRED** (not computed in backfill): a true cross-conversation k-NN over
+  every indexed turn is O(n²) project-wide and order-dependent, and retrieval
+  doesn't need it (project/all dense search already spans all indexed
+  conversations) — future work. analyze clean; +11 tests (backfill: indexes all,
+  no-op when done, re-entrancy, pause, foreground-yield, soft-edge chain, cancel;
+  scope wiring: session vs project, all vs project; selector widget reflects +
+  updates). Visual verification deferred (project convention; widget test is the
+  gate).
 - 2026-06-25 · M9.2 · generated read-only project wiki (DESIGN.md §10 "Project
   wiki … entities as hyperlinked pages, facts as content, `fact_sources` for
   click-through; topical clustering — topics cross branches"). **Data**:
