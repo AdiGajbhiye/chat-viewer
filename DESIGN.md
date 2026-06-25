@@ -9,9 +9,9 @@ pannable/zoomable canvas, instead of a linear chat transcript.
 **Scope for v1:** Viewer-only. Import the official ChatGPT data export and explore
 it on canvas. No live LLM chat yet (the architecture must not preclude it — see
 [Future work](#9-future-work)).
-**Phase 2 (designed, not yet built):** evolve the viewer into a research /
-exploration workspace — retrieval-assembled context for continuing long, forked
-sessions, a curated facts/decisions layer, and a generated project wiki. See §10.
+**Phase 2 (built · M6–M9):** evolves the viewer into a research / exploration
+workspace — retrieval-assembled context for continuing long, forked sessions, a
+curated facts/decisions layer, and a generated project wiki. See §10.
 
 ---
 
@@ -448,8 +448,9 @@ No canvas/graph package — custom, per §6.
 
 Phase 2 turns the viewer into a **research / exploration workspace**: you keep
 working a long, heavily-forked session and the app distills it into a condensed,
-high-signal design doc. The existing turn graph, importer and storage stay as-is;
-everything below is designed but not yet built.
+high-signal design doc. The existing turn graph, importer and storage stay as-is.
+Built and shipped as milestones M6–M9 (see PROGRESS.md); the one deferred item is
+real-engine visual verification of the new UI.
 
 The driving constraint: continuing a long session can't fit the whole history in
 the context window — and for a drifting, multi-topic research conversation the
@@ -596,7 +597,7 @@ project outgrows memory.
 5. **M5 Polish:** FTS search, images/PDF assets, macOS shortcuts + menus,
    Android back/deep-link to conversation, import warnings UI.
 
-### Phase 2
+### Phase 2 (done — shipped as M6.1–M9.3; see PROGRESS.md)
 
 6. **M6 Index foundation:** drift migration v3 (Project tier + new tables);
    `EmbeddingProvider` interface beside `LlmProvider`; proposition + entity

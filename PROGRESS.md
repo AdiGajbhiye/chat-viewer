@@ -1,8 +1,8 @@
 # Implementation Progress
 
-Changelog for [Canvas Chat](DESIGN.md). Milestones **M1–M5 are complete**; work
-since is post-M5 features, fixes and reviews, plus **Phase 2** design (DESIGN.md
-§10), not yet built. Newest first.
+Changelog for [Canvas Chat](DESIGN.md). Milestones **M1–M5** complete; **Phase 2**
+(M6–M9, DESIGN.md §10) — lazy indexing, retrieval-assembled context, facts/commit,
+soft edges, and the project wiki — now built. Newest first.
 
 Conventions: keep `flutter analyze` clean and `flutter test` green; record
 non-obvious decisions and test gotchas in the log (git holds the detail).
@@ -13,7 +13,22 @@ M1 Import + data layer · M2 Conversation list + read mode · M3 Navigate canvas
 M4 Read-mode integration · M5 Polish (FTS search, asset rendering, macOS menu +
 shortcuts, Android input, import warnings).
 
+**Phase 2** (research/exploration workspace, DESIGN.md §10): M6 index foundation
+(schema v3 · embeddings · extraction) · M7 lazy indexer · M8 soft edges + retrieval
+· M9 facts/commit + wiki + cross-session. Shipped as M6.1–M9.3 (see Log).
+
 ## Log
+
+- 2026-06-25 · Phase 2 complete · all of M6.1–M9.3 landed; independent full run on
+  the final tree: `flutter analyze` clean, `flutter test` **302 passing**. The
+  viewer is now a retrieval-backed research workspace — lazy per-session indexing,
+  a proposition index + embeddings, hybrid fork-aware retrieval (replacing the
+  full-ancestry context send), a committed facts layer, a soft-edge canvas layer +
+  generated wiki, and cross-session scope + idle backfill. Each step was built in
+  an isolated fresh-context agent and committed only after analyze + tests passed.
+  The one deferred item is real-engine visual verification of the new UI (soft-edge
+  layer, scope/commit controls, wiki) — goldens don't match macOS Impeller, so that
+  needs a release-build screenshot pass.
 
 - 2026-06-25 · M9.3 · cross-session retrieval scope toggle + idle-time index
   backfill (DESIGN.md §10 "Scope filter = branch | session | project | all" +
